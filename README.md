@@ -12,6 +12,8 @@
 
 ---
 
+https://github.com/user-attachments/assets/84bf04d7-2583-4fc6-b5a4-e2d8bdf2a7c2
+
 ## Why This Project Matters
 
 The standard advice for understanding an API is "just paste the spec into ChatGPT." That breaks down fast.
