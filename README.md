@@ -37,6 +37,7 @@ The standard advice for understanding an API is "just paste the spec into ChatGP
 - **Multi-spec support** - ingest multiple APIs simultaneously and switch between them with one click
 - **Dual ingest modes** - paste a public URL or upload a local `.json` file (for private/internal specs)
 - **Persistent vector store** - ChromaDB and BM25 indexes persist to disk; specs survive restarts without re-ingestion.
+- **Voice input** - record a question via the browser's MediaRecorder API; audio is transcribed by Whisper via Groq (~1s) and populated into the query box automatically.
 
 ---
 
@@ -74,7 +75,8 @@ The standard advice for understanding an API is "just paste the spec into ChatGP
 
 - Python 3.11+
 - React.js 18+
-- A free [HuggingFace token](https://huggingface.co/settings/tokens)
+- A free [HuggingFace token](https://huggingface.co/settings/tokens)  (for the LLM)
+- A free [Groq API key](https://console.groq.com) (for voice transcription)
 
 ### Backend
 
@@ -97,6 +99,7 @@ Create `.env`:
 
 ```env
 HF_TOKEN=your_token_here
+GROQ_API_KEY=your_groq_key_here
 ```
 
 Start the backend server:
@@ -190,6 +193,26 @@ Ask a question against an ingested spec.
 
 ---
 
+### `POST /transcribe`
+
+Transcribe a browser audio recording to text via Groq Whisper, for use as a query.
+
+**Request**
+
+```json
+file: <recording.webm>
+```
+
+**Response**
+
+```json
+{
+  "transcript": "How do I authenticate with the API?"
+}
+```
+
+---
+
 ### `GET /specifications`
 
 List all currently ingested specification names.
@@ -249,6 +272,7 @@ DocQuery/
 | Variable | Required | Description |
 |---|---|---|
 | `HF_TOKEN` | Yes | HuggingFace access token for the inference router |
+| `GROQ_API_KEY` | Yes | Groq API key for Whisper voice transcription |
 
 ### Changing the LLM
 
@@ -266,7 +290,7 @@ Remove-Item -Recurse -Force chromaDB, bm25_indexes # Windows PowerShell
 
 ## Limitations
 
-- **HuggingFace free tier** - rate limited; responses may take 5–15 seconds under load. For production use, swap to Groq (free, ~1s responses) or a paid inference provider.
+- **HuggingFace free tier** - rate limited to the LLM; responses may take 5–15 seconds under load. For faster LLM responses, swap to Groq in `llm.py`.
 - **Schema depth** - `$ref` resolution is capped at 6 levels. Deeply nested `$ref` chains beyond that are not resolved.
 - **YAML specs** - only JSON OpenAPI specs are supported. For YAML specs, convert first: `python -c "import yaml,json,sys; json.dump(yaml.safe_load(open('spec.yaml')), open('spec.json','w'))"`.
 - **HHEM model load time** - the Vectara hallucination model is loaded at startup and adds a few seconds to cold start.

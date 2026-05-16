@@ -11,6 +11,7 @@ from loggerConfig import get_logger
 
 load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN", "")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
 logger = get_logger("main")
 
@@ -148,3 +149,39 @@ def list_specs():
     except Exception as e:
         logger.error(f"Failed to list specifications: {e}")
         raise HTTPException(status_code=500, detail="Failed to list specifications")
+    
+# Transcribe endpoint
+@app.post("/transcribe")
+async def transcribe(file: UploadFile = File(...)):
+    logger.info(f"Transcribe request received: {file.filename}")
+    try:
+        audio_bytes = await file.read()
+        if not audio_bytes:
+            raise HTTPException(status_code=400, detail="Empty audio file.")
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+                files={"file": ("recording.webm", audio_bytes, file.content_type or "audio/webm")},
+                data={
+                    "model": "whisper-large-v3-turbo",
+                    "language": "en",
+                    "response_format": "json",
+                    "temperature": "0.0",
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+        transcript = data.get("text", "").strip()
+        if not transcript:
+            raise HTTPException(status_code=422, detail="Could not transcribe audio.")
+        logger.info(f"Transcribed: '{transcript[:80]}'")
+        return {"transcript": transcript}
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Groq API error: {e.response.status_code} — {e.response.text}")
+        raise HTTPException(status_code=502, detail="Transcription service error.")
+    except Exception as e:
+        logger.error(f"Transcribe failed: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
