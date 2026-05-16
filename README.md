@@ -30,13 +30,13 @@ The standard advice for understanding an API is "just paste the spec into ChatGP
 
 ## Features
 
-- **RAG pipeline** - OpenAPI spec is chunked, embedded with `all-MiniLM-L6-v2`, and stored in ChromaDB; each query retrieves the top-N relevant chunks before hitting the LLM.
-- **`$ref` resolution** - request body schemas are fully dereferenced at ingest time, so field names like `name` are semantically searchable.
-- **Confidence scoring** - cosine similarity between the LLM answer and retrieved chunks, returned as a 0–100 score
+- **RAG pipeline** - OpenAPI spec is chunked, embedded with `all-mpnet-base-v2`, and stored in ChromaDB alongside a BM25 index; each query runs dense and keyword retrieval in parallel, fuses them with Reciprocal Rank Fusion (RRF), then re-ranks candidates with a cross-encoder before hitting the LLM.
+- **`$ref` resolution** - request body schemas are fully dereferenced at ingest time, including `allOf`, `anyOf`, and `oneOf` composition patterns (up to 6 levels deep), so field names like `name` are semantically searchable.
+- **Confidence scoring** - a hybrid of Vectara's HHEM hallucination model (70%) and cosine similarity (30%), with a JSON field grounding check blended into the HHEM score. Falls back to cosine-only if HHEM is unavailable.
 - **Source citations** - every answer includes the exact HTTP method + path that grounded it
 - **Multi-spec support** - ingest multiple APIs simultaneously and switch between them with one click
 - **Dual ingest modes** - paste a public URL or upload a local `.json` file (for private/internal specs)
-- **Persistent vector store** - ChromaDB persists to disk; specs survive restarts without re-ingestion
+- **Persistent vector store** - ChromaDB and BM25 indexes persist to disk; specs survive restarts without re-ingestion.
 
 ---
 
@@ -48,17 +48,23 @@ The standard advice for understanding an API is "just paste the spec into ChatGP
 
 ## Design Decisions
 
-**Summary-first chunking** - Each chunk starts with `{summary} - {METHOD} {path}` before the technical details. The sentence transformer sees the human-readable description first, which dramatically improves retrieval for natural language queries over path-only chunking.
+**Summary-first chunking** - Each chunk starts with `{summary} - {METHOD} {path}` before the technical details. The sentence transformer sees the human-readable description first, which dramatically improves retrieval for natural language queries over path-only chunking. Synonym expansion is also injected into each chunk so keyword queries hit the right endpoints.
 
-**`$ref` resolution at ingest time** - OpenAPI specs use `$ref` pointers for all request/response schemas. Without resolving them, chunks contain `#/components/schemas/SecretCreate` instead of the actual field names (`notify_on_view`, `webhook_url`). Resolving at ingest time means field names are semantically searchable.
+**`$ref` resolution at ingest time** - OpenAPI specs use `$ref` pointers for all request/response schemas. Without resolving them, chunks contain `#/components/schemas/User` instead of the actual field names (`name`, `password`). The resolver handles `allOf`, `anyOf`, and `oneOf` composition up to 6 levels deep, so nested schemas are fully searchable.
 
-**Confidence scoring as a hallucination signal** - Cosine similarity between the LLM's answer embedding and the retrieved chunk embeddings gives a proxy for groundedness. A low score (< 50) means the answer diverged from the source material - useful for identifying when the model is making things up.
+**Hybrid BM25 + dense retrieval with RRF** - Dense embeddings capture semantic similarity; BM25 catches exact keyword matches (endpoint paths, parameter names). Reciprocal Rank Fusion combines both ranked lists into a single candidate set without needing a tuned interpolation weight. A cross-encoder then re-ranks the fused top-N for precision before the prompt is built.
 
-**Per-spec ChromaDB collections** - Each ingested API gets its own collection with a sanitized name. This allows simultaneous multi-spec support with zero cross-contamination and O(1) collection switching.
+**BM25 + RRF over HyDE** - HyDE generates a hypothetical answer to use as a proxy query, which helps when queries are vague and documents are unstructured prose. API documentation is the opposite: queries are specific ("how do I update a customer") and documents are structured chunks with exact method+path identifiers. In that setting HyDE introduces hallucination risk at the retrieval stage - a fabricated answer may embed closer to the wrong endpoint than the right one. BM25 handles this domain more reliably: "update a customer" is a near-exact keyword match to `Update a customer — PATCH /v1/customers/{customer}`, whereas a dense-only retriever can rank it far lower because the embedding model doesn't bridge synonyms like "modify" → "update" at query time. Running both in parallel and fusing with RRF captures keyword precision and semantic recall without the hallucination risk HyDE introduces at retrieval.
+
+**HHEM + cosine confidence scoring** - Vectara's Hallucination Evaluation Model (HHEM) scores factual consistency between the answer prose and retrieved chunks. A separate JSON field grounding check verifies that any code examples in the answer use only field names present in the spec. The two signals are blended (70/30) and combined with cosine similarity as a fallback, giving a 0–100 score that acts as a metric for detecting hallucinations.
+
+**Per-spec ChromaDB collections + BM25 indexes** - Each ingested API gets its own ChromaDB collection and a paired `.pkl` BM25 index on disk. This allows simultaneous multi-spec support with zero cross-contamination and O(1) collection switching.
 
 **Dual ingest modes** - URL ingest for public specs, file upload for private/internal APIs that can't be sent to external services. Both paths converge at the same `extract_chunks()` function.
 
 **Llama 3.1 8B over Zephyr 7B** - Zephyr consistently ignored strict prompt rules and hallucinated parameters not in the spec. Llama 3.1 follows instruction constraints reliably enough for production-quality answers on API documentation tasks.
+
+**`all-mpnet-base-v2` over `all-MiniLM-L6-v2`** - MiniLM-L6 is faster but uses a distilled attention mechanism. API documentation chunks pack a summary, HTTP method, path, parameters, and schema fields into a single block; mpnet's full attention across the whole sequence produces more accurate embeddings for these dense, structured inputs. The trade-off - larger model, slower encode - is negligible in practice since embedding happens once at ingest and query embedding is a single short string.
 
 ---
 
@@ -211,7 +217,8 @@ DocQuery/
 |   ├── llm.py            
 |   ├── confidence.py     
 |   ├── loggerConfig.py       
-|   ├── chromaDB/          
+|   ├── chromaDB/       
+|   ├── bm25_indexes/ 
 ├── .env            
 └── frontend/
     ├── DocQuery.jsx      
@@ -251,8 +258,8 @@ The model is set in `llm.py`. Any model available on the [HuggingFace router](ht
 
 ```bash
 # Wipe all ingested specs and start fresh
-rm -rf chromaDB/                       # Linux/Mac
-Remove-Item -Recurse -Force chromaDB   # Windows PowerShell
+rm -rf chromaDB/ bm25_indexes/                     # Linux/Mac
+Remove-Item -Recurse -Force chromaDB, bm25_indexes # Windows PowerShell
 ```
 
 ---
@@ -260,7 +267,8 @@ Remove-Item -Recurse -Force chromaDB   # Windows PowerShell
 ## Limitations
 
 - **HuggingFace free tier** - rate limited; responses may take 5–15 seconds under load. For production use, swap to Groq (free, ~1s responses) or a paid inference provider.
-- **Schema depth** - `$ref` resolution is one level deep. Nested `$ref` chains (schemas referencing other schemas) are not fully resolved.
+- **Schema depth** - `$ref` resolution is capped at 6 levels. Deeply nested `$ref` chains beyond that are not resolved.
 - **YAML specs** - only JSON OpenAPI specs are supported. For YAML specs, convert first: `python -c "import yaml,json,sys; json.dump(yaml.safe_load(open('spec.yaml')), open('spec.json','w'))"`.
+- **HHEM model load time** - the Vectara hallucination model is loaded at startup and adds a few seconds to cold start.
 
 ---

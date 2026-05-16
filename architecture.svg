@@ -25,7 +25,7 @@
   <text x="95" y="73" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="14" font-weight="500" fill="var(--text-primary)">Browser</text>
   <text x="95" y="95" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="var(--text-secondary)">React + Vite UI</text>
 
-  <!-- Arrow: Browser → FastAPI (ingest) -->
+  <!-- Arrow: Browser -> FastAPI (ingest) -->
   <line x1="150" y1="82" x2="205" y2="82" stroke="var(--arrow-dash)" stroke-width="1" opacity="0.6" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
   <text x="178" y="75" text-anchor="middle" font-family="monospace" font-size="11" fill="var(--label)" opacity="0.7">URL/file</text>
 
@@ -35,7 +35,7 @@
   <text x="267" y="87" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#5DCAA5">Validates </text>
    <text x="267" y="102" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#5DCAA5"> &amp; routes</text>
 
-  <!-- Arrow: FastAPI → ingest.py -->
+  <!-- Arrow: FastAPI -> ingest.py -->
   <line x1="330" y1="82" x2="364" y2="82" stroke="var(--arrow)" stroke-width="1" opacity="0.6" marker-end="url(#arrow)"/>
 
   <!-- ingest.py -->
@@ -44,7 +44,7 @@
   <text x="438" y="86" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#85B7EB">Chunks specification,</text>
   <text x="437" y="101" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#85B7EB">resolves $ref fields</text>
 
-  <!-- Arrow: ingest.py → Embedder -->
+  <!-- Arrow: ingest.py -> Embedder -->
   <line x1="506" y1="82" x2="540" y2="82" stroke="var(--arrow)" stroke-width="1" opacity="0.6" marker-end="url(#arrow)"/>
 
   <!-- Embedder -->
@@ -53,7 +53,7 @@
   <text x="590" y="86" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#85B7EB">Converts text</text>
   <text x="590" y="101" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#85B7EB">to vectors</text>
 
-  <!-- Arrow: Embedder → ChromaDB -->
+  <!-- Arrow: Embedder -> ChromaDB -->
   <line x1="590" y1="114" x2="590" y2="152" stroke="var(--arrow)" stroke-width="1" opacity="0.6" marker-end="url(#arrow)"/>
 
   <!-- ChromaDB -->
@@ -78,7 +78,7 @@
   <text x="95" y="330" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="var(--text-secondary)">User types</text>
   <text x="95" y="345" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="var(--text-secondary)">a question</text>
 
-  <!-- Arrow: Browser → FastAPI (query) -->
+  <!-- Arrow: Browser -> FastAPI (query) -->
   <line x1="150" y1="328" x2="188" y2="328" stroke="var(--arrow-dash)" stroke-width="1" opacity="0.6" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
 
   <!-- FastAPI (query) -->
@@ -87,7 +87,7 @@
   <text x="257" y="330" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#5DCAA5">Receives question</text>
   <text x="257" y="345" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#5DCAA5">&amp; spec name</text>
 
-  <!-- Arrow: FastAPI → Retriever -->
+  <!-- Arrow: FastAPI -> Retriever -->
   <line x1="326" y1="328" x2="364" y2="328" stroke="var(--arrow)" stroke-width="1" opacity="0.6" marker-end="url(#arrow)"/>
 
   <!-- Retriever -->
@@ -96,12 +96,12 @@
   <text x="433" y="330" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#85B7EB">Embeds question,</text>
   <text x="433" y="345" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#85B7EB">fetches top 5 chunks</text>
 
-  <!-- Arrow: Retriever → ChromaDB (dashed lookup) -->
+  <!-- Arrow: Retriever -> ChromaDB (dashed lookup) -->
   <path d="M590 296 L590 216" fill="none" stroke="var(--lookup)" stroke-width="1" opacity="0.7" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
   <text x="600" y="258" font-family="monospace" font-size="11" fill=
   "var(--lookup)" opacity="0.6">lookup</text>
 
-  <!-- Arrow: Retriever → LLM -->
+  <!-- Arrow: Retriever -> LLM -->
   <line x1="502" y1="328" x2="540" y2="328" stroke="var(--arrow)" stroke-width="1" opacity="0.6" marker-end="url(#arrow)"/>
 
   <!-- LLM -->
@@ -114,16 +114,16 @@
   <text x="257" y="410" text-anchor="middle" font-family="monospace" font-size="11" fill="var(--step)" opacity="0.6">6. return to user</text>
   <text x="433" y="410" text-anchor="middle" font-family="monospace" font-size="11" fill="var(--step)" opacity="0.6">5. score answer</text>
 
-  <!-- Arrow: LLM → Confidence (L-bend) -->
+  <!-- Arrow: LLM -> Confidence (L-bend) -->
   <path d="M590 360 L590 452 L502 452" fill="none" stroke="var(--arrow)" stroke-width="1" opacity="0.6" marker-end="url(#arrow)"/>
 
   <!-- Confidence -->
   <rect x="364" y="420" width="138" height="64" rx="8" stroke-width="0.5" fill="#711B13" stroke="#F0997B"/>
   <text x="433" y="438" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="14" font-weight="500" fill="#F5C4B3">Confidence</text>
   <text x="433" y="455" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#F0997B">Compares answer vs</text>
-  <text x="433" y="468" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#F0997B">chunks → 0–100 score</text>
+  <text x="433" y="468" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#F0997B">chunks -> 0–100 score</text>
 
-  <!-- Arrow: Confidence → FastAPI -->
+  <!-- Arrow: Confidence -> FastAPI -->
   <line x1="364" y1="452" x2="326" y2="452" stroke="var(--arrow)" stroke-width="1" opacity="0.6" marker-end="url(#arrow)"/>
 
   <!-- FastAPI (response) -->
@@ -132,7 +132,7 @@
   <text x="257" y="455" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#5DCAA5">Packages answer,</text>
   <text x="257" y="468" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#5DCAA5">sources, score</text>
 
-  <!-- Arrow: FastAPI → Browser (response) -->
+  <!-- Arrow: FastAPI -> Browser (response) -->
   <line x1="188" y1="452" x2="150" y2="452" stroke="var(--arrow-dash)" stroke-width="1" opacity="0.6" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
 
   <!-- Browser (response) -->

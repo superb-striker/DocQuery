@@ -1,14 +1,18 @@
-import json
+import json, os, httpx
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from dotenv import load_dotenv
 from ingest import fetch_specification, extract_chunks
-from vectorStore import client, store_chunks, retrieve
+from vectorStore import client, store_chunks, retrieve_hybrid
 from llm import build_prompt, query_llm
 from confidence import score_confidence
 from loggerConfig import get_logger
 
-logger = get_logger("api")
+load_dotenv()
+HF_TOKEN = os.getenv("HF_TOKEN", "")
+
+logger = get_logger("main")
 
 app = FastAPI(title="DocQuery")
 
@@ -80,28 +84,40 @@ async def ingest_file(file: UploadFile = File(...)):
         logger.error(f"File ingest failed: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-# Query Endpoint 
 @app.post("/query")
 async def query(req: QueryRequest):
+    """
+    Query pipeline:
+      1. Hybrid retrieval : BM25 + dense in parallel, fused with RRF.
+      2. Cross-encoder re-ranking : top 5 from fused candidates.
+      3. Build prompt from re-ranked chunks.
+      4. Query LLM for final answer.
+      5. Score confidence with HHEM + cosine hybrid.
+    """
     logger.info(f"Query received for specification: {req.specification_name}")
     try:
-        # Retrieve relevant chunks
-        chunks = retrieve(req.question, req.specification_name, num_results=5)
+        # Stage 1+2: hybrid retrieval + re-ranking
+        chunks = retrieve_hybrid(
+            query=req.question,
+            specification_name=req.specification_name,
+            num_results=20,
+            rerank_top_n=5,
+        )
         if not chunks:
             logger.warning("No chunks found for query.")
             raise HTTPException(
                 status_code=404,
-                detail="No specification found with that name. Ingest it first."
+                detail="No specification found with that name. Ingest it first.",
             )
-        # Build prompt
+        # Stage 3: build prompt
         prompt = build_prompt(req.question, chunks)
         logger.debug("Prompt built successfully.")
-        # Query LLM
+        # Stage 4: LLM answer
         answer = await query_llm(prompt)
         if not answer:
             logger.error("LLM returned empty response.")
             raise HTTPException(status_code=500, detail="LLM failed to generate response.")
-        # Confidence scoring
+        # Stage 5: confidence scoring
         confidence = score_confidence(req.question, answer, chunks)
         logger.info(f"Query processed successfully (confidence={confidence}).")
         return {

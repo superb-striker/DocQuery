@@ -24,16 +24,17 @@ def build_prompt(query: str, chunks: List[Dict]) -> str:
     except KeyError as e:
         logger.error(f"Chunk missing 'text' field: {e}")
         context = ""
-    prompt = f"""You are an API documentation assistant. Answer concisely and accurately.
+    prompt = f"""You are an API documentation assistant. Answer using ONLY the SPEC SECTIONS below.
+    
+            OUTPUT FORMAT - follow this exactly:
+            **Endpoint:** [HTTP METHOD] [path]
+            **Summary:** [one sentence from the spec]
+            **Parameters:** [list only parameters explicitly named in the spec, or "None listed in spec"]
+            **Request Body:** [list only fields explicitly named in the spec, or "Not specified in spec"]
+            **Notes:** [any other relevant details from the spec only, do not reference other things in this spec.]
 
-            STRICT RULES:
-            - Use ONLY the information in the SPEC SECTIONS below
-            - If the answer is not in the spec, say "This information is not in the provided specification"
-            - Do NOT repeat yourself or list unrelated endpoints
-            - Reference exact HTTP methods, paths, and field names from the spec
-            - If the question involves creating or sending data, always include a clean example request body in valid JSON
-            - In the example, use realistic placeholder values (not the internal field list format)
-            - Stop after answering the question fully
+            If the spec sections do not contain enough information to fill a field, write "Not specified in spec" for that field.
+            Do not add information from outside the spec. 
 
             SPEC SECTIONS:
             {context}
@@ -61,6 +62,7 @@ async def query_llm(prompt: str) -> str:
                     "max_tokens": 400,
                     "temperature": 0.1,
                     "stop": [
+                        "However,",
                         "USER QUESTION:",    # stops hallucinated follow-ups
                         "QUESTION:",
                         "[INST]",
@@ -73,11 +75,15 @@ async def query_llm(prompt: str) -> str:
             response.raise_for_status()
             try:
                 data = response.json()
+                if "error" in data:
+                    logger.error(f"HF API error: {data['error']}")
+                    return ""
+                # also guard against missing choices
+                if not data.get("choices"):
+                    logger.error(f"Unexpected response format, no choices: {data}")
+                    return ""
             except Exception:
                 logger.error("Failed to parse JSON response.")
-                return ""
-            if "error" in data:
-                logger.error(f"HF API error: {data['error']}")
                 return ""
             try:
                 answer = data["choices"][0]["message"]["content"].strip()
