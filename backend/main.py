@@ -3,6 +3,7 @@ from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from langfuse import observe, get_client
 from ingest import fetch_specification, extract_chunks
 from vectorStore import client, store_chunks, retrieve_hybrid
 from llm import build_prompt, query_llm
@@ -12,20 +13,19 @@ from loggerConfig import get_logger
 load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+langfuse = get_client()
 
 logger = get_logger("main")
 
 app = FastAPI(title="DocQuery")
 
-# Adding middleware to allow connections from React frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Vite's default port
+    allow_origins=["http://localhost:5173"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Request Models 
 class IngestRequest(BaseModel):
     specification_url: str
 
@@ -33,10 +33,46 @@ class QueryRequest(BaseModel):
     question: str
     specification_name: str
 
-# Ingest Endpoint
+
+# Observed helpers
+@observe(name="hybrid-retrieval")
+def run_retrieval(question: str, specification_name: str):
+    chunks = retrieve_hybrid(
+        query=question,
+        specification_name=specification_name,
+        num_results=20,
+        rerank_top_n=5,
+    )
+    # Log what was retrieved so it's visible in the span
+    langfuse.update_current_span(
+        input={"question": question, "specification": specification_name},
+        output={
+            "chunks_returned": len(chunks) if chunks else 0,
+            "endpoints": [
+                f"{c['metadata']['method']} {c['metadata']['path']}"
+                for c in (chunks or [])
+            ]
+        }
+    )
+    return chunks
+
+@observe(name="llm-generate")
+async def run_generation(prompt: str):
+    # Log the full prompt so you can debug what the LLM actually received
+    langfuse.update_current_span(input={"prompt": prompt})
+    answer = await query_llm(prompt)
+    langfuse.update_current_span(output={"answer": answer})
+    return answer
+
+# Endpoints
+
 @app.post("/ingest")
+@observe(name="ingest")
 async def ingest(req: IngestRequest):
     logger.info(f"Ingest request received: {req.specification_url}")
+    langfuse.set_current_trace_io(
+        input={"url": req.specification_url}
+    )
     try:
         specification = fetch_specification(req.specification_url)
         if not specification:
@@ -49,20 +85,28 @@ async def ingest(req: IngestRequest):
             logger.warning("No chunks extracted from specification.")
         count = store_chunks(chunks, specification_name)
         logger.info(f"Ingested {count} chunks for {specification_name}.")
-        return {
+        result = {
             "specification_name": specification_name,
             "chunks_stored": count,
             "message": f"Successfully ingested {count} endpoints."
         }
+        langfuse.set_current_trace_io(output={
+            "specification_name": specification_name,
+            "chunks_stored": count
+        })
+        return result
     except HTTPException:
-        raise  # already handled
+        raise
     except Exception as e:
         logger.error(f"Ingest failed: {e}.")
+        langfuse.update_current_span(output={"error": str(e)})
         raise HTTPException(status_code=500, detail="Internal server error")
-    
+
 @app.post("/ingest/file")
+@observe(name="ingest-file")
 async def ingest_file(file: UploadFile = File(...)):
     logger.info(f"File ingest request received: {file.filename}")
+    langfuse.set_current_trace_io(input={"filename": file.filename})
     try:
         content = await file.read()
         specification = json.loads(content)
@@ -72,20 +116,27 @@ async def ingest_file(file: UploadFile = File(...)):
         chunks = extract_chunks(specification)
         count = store_chunks(chunks, specification_name)
         logger.info(f"Ingested {count} chunks for {specification_name}.")
-        return {
+        result = {
             "specification_name": specification_name,
             "chunks_stored": count,
             "message": f"Successfully ingested {count} endpoints."
         }
+        langfuse.set_current_trace_io(output={
+            "specification_name": specification_name,
+            "chunks_stored": count
+        })
+        return result
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid or empty specification.")
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"File ingest failed: {e}")
+        langfuse.update_current_span(output={"error": str(e)})
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.post("/query")
+@observe(name="rag-query")
 async def query(req: QueryRequest):
     """
     Query pipeline:
@@ -96,14 +147,13 @@ async def query(req: QueryRequest):
       5. Score confidence with HHEM + cosine hybrid.
     """
     logger.info(f"Query received for specification: {req.specification_name}")
+    # Log the user's question as the trace input — visible at the top level in Langfuse
+    langfuse.set_current_trace_io(
+        input={"question": req.question, "specification": req.specification_name}
+    )
     try:
         # Stage 1+2: hybrid retrieval + re-ranking
-        chunks = retrieve_hybrid(
-            query=req.question,
-            specification_name=req.specification_name,
-            num_results=20,
-            rerank_top_n=5,
-        )
+        chunks = run_retrieval(req.question, req.specification_name)
         if not chunks:
             logger.warning("No chunks found for query.")
             raise HTTPException(
@@ -114,31 +164,35 @@ async def query(req: QueryRequest):
         prompt = build_prompt(req.question, chunks)
         logger.debug("Prompt built successfully.")
         # Stage 4: LLM answer
-        answer = await query_llm(prompt)
+        answer = await run_generation(prompt)
         if not answer:
             logger.error("LLM returned empty response.")
             raise HTTPException(status_code=500, detail="LLM failed to generate response.")
         # Stage 5: confidence scoring
         confidence = score_confidence(req.question, answer, chunks)
         logger.info(f"Query processed successfully (confidence={confidence}).")
-        return {
-            "answer": answer,
-            "confidence": confidence,
-            "sources": [
-                {
-                    "endpoint": f"{c['metadata']['method']} {c['metadata']['path']}",
-                    "summary": c['metadata']['summary']
-                }
-                for c in chunks
-            ]
-        }
+        sources = [
+            {
+                "endpoint": f"{c['metadata']['method']} {c['metadata']['path']}",
+                "summary": c['metadata']['summary']
+            }
+            for c in chunks
+        ]
+        # Log the answer + confidence as the trace output
+        langfuse.set_current_trace_io(
+            output={"answer": answer, "confidence": confidence, "sources": sources}
+        )
+        # Confidence as a 0-1 metric — shows up in Langfuse's scores tab and dashboard charts
+        langfuse.score_current_trace(name="confidence", value=confidence / 100)
+        return {"answer": answer, "confidence": confidence, "sources": sources}
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Query failed: {e}")
+        langfuse.update_current_span(output={"error": str(e)})
         raise HTTPException(status_code=500, detail="Internal server error")
 
-# List Specifications 
+# List Specifications
 @app.get("/specifications")
 def list_specs():
     try:
@@ -149,8 +203,8 @@ def list_specs():
     except Exception as e:
         logger.error(f"Failed to list specifications: {e}")
         raise HTTPException(status_code=500, detail="Failed to list specifications")
-    
-# Transcribe endpoint
+
+# Transcribe endpoint — not traced, it's infrastructure not RAG pipeline
 @app.post("/transcribe")
 async def transcribe(file: UploadFile = File(...)):
     logger.info(f"Transcribe request received: {file.filename}")

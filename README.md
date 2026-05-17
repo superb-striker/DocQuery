@@ -8,6 +8,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688?style=flat-square&logo=fastapi&logoColor=white)
 ![React](https://img.shields.io/badge/React-19+-61DAFB?style=flat-square&logo=react&logoColor=black)
 ![ChromaDB](https://img.shields.io/badge/ChromaDB-Vector_Store-FF6B35?style=flat-square)
+![Langfuse](https://img.shields.io/badge/Langfuse-Observability-000000?style=flat-square)
 ![HuggingFace](https://img.shields.io/badge/HuggingFace-Llama_3.1-FFD21E?style=flat-square&logo=huggingface&logoColor=black)
 
 ---
@@ -38,6 +39,7 @@ The standard advice for understanding an API is "just paste the spec into ChatGP
 - **Dual ingest modes** - paste a public URL or upload a local `.json` file (for private/internal specs)
 - **Persistent vector store** - ChromaDB and BM25 indexes persist to disk; specs survive restarts without re-ingestion.
 - **Voice input** - record a question via the browser's MediaRecorder API; audio is transcribed by Whisper via Groq (~1s) and populated into the query box automatically.
+- **Pipeline observability** - every query is traced end-to-end with Langfuse; retrieval span logs which endpoints were retrieved, the LLM generation span logs the full prompt and answer, and confidence scores are tracked as metrics across all queries.
 
 ---
 
@@ -273,6 +275,9 @@ DocQuery/
 |---|---|---|
 | `HF_TOKEN` | Yes | HuggingFace access token for the inference router |
 | `GROQ_API_KEY` | Yes | Groq API key for Whisper voice transcription |
+| `LANGFUSE_PUBLIC_KEY` | Yes | Langfuse project public key |
+| `LANGFUSE_SECRET_KEY` | Yes | Langfuse project secret key |
+| `LANGFUSE_HOST` | Yes | Langfuse host (e.g. `https://jp.cloud.langfuse.com`) |
 
 ### Changing the LLM
 
