@@ -1,4 +1,4 @@
-<svg width="100%" viewBox="0 0 680 580" role="img" style="background:#0a0a0f;border-radius:12px" xmlns="http://www.w3.org/2000/svg">
+<svg width="100%" viewBox="0 0 780 780" role="img" style="background:#0a0a0f;border-radius:12px" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -18,7 +18,7 @@
 
   <!-- ── INGEST FLOW LABEL ── -->
   <text x="340" y="28" text-anchor="middle" font-family="monospace" font-size="12" fill="var(--label)" opacity="0.7">ingest flow — runs once per spec</text>
-  <line x1="40" y1="35" x2="640" y2="35" stroke="var(--arrow)" stroke-width="0.5" opacity="0.2"/>
+  <line x1="40" y1="35" x2="740" y2="35" stroke="var(--arrow)" stroke-width="0.5" opacity="0.2"/>
 
   <!-- Browser (ingest) -->
   <rect x="40" y="50" width="110" height="64" rx="8" stroke-width="0.5" fill="#444441" stroke="#b4b2a9"/>
@@ -59,99 +59,137 @@
   <!-- ChromaDB -->
   <rect x="540" y="152" width="100" height="64" rx="8" stroke-width="0.5" fill="#3C3489" stroke="#AFA9EC"/>
   <text x="590" y="170" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="14" font-weight="500" fill="#CECBF6">ChromaDB</text>
-  <text x="590" y="188" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#AFA9EC">Stores vectors</text>
-  <text x="590" y="203" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#AFA9EC">on disk</text>
+  <text x="590" y="188" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#AFA9EC">Dense vectors</text>
+
+  <!-- Arrow: Embedder -> BM25 (diagonal) -->
+  <line x1="590" y1="114" x2="683" y2="152" stroke="var(--arrow)" stroke-width="1" opacity="0.5" marker-end="url(#arrow)"/>
+
+  <!-- BM25 index -->
+  <rect x="648" y="152" width="84" height="64" rx="8" stroke-width="0.5" fill="#3C3489" stroke="#AFA9EC"/>
+  <text x="690" y="170" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="14" font-weight="500" fill="#CECBF6">BM25</text>
+  <text x="690" y="188" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#AFA9EC">Keyword</text>
+  <text x="690" y="203" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#AFA9EC">index</text>
+
+  <!-- ── VOICE FLOW ── -->
+  <text x="340" y="248" text-anchor="middle" font-family="monospace" font-size="12" fill="var(--label)" opacity="0.7">voice flow — optional, per query</text>
+  <line x1="40" y1="256" x2="740" y2="256" stroke="var(--arrow)" stroke-width="0.5" opacity="0.2"/>
+
+  <!-- Browser (voice) -->
+  <rect x="40" y="270" width="110" height="64" rx="8" stroke-width="0.5" fill="#444441" stroke="#b4b2a9"/>
+  <text x="95" y="287" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="14" font-weight="500" fill="var(--text-primary)">Browser</text>
+  <text x="95" y="305" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="var(--text-secondary)">MediaRecorder</text>
+
+  <!-- Arrow: Browser -> FastAPI (voice) -->
+  <line x1="150" y1="302" x2="205" y2="302" stroke="var(--arrow-dash)" stroke-width="1" opacity="0.6" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+  <text x="178" y="295" text-anchor="middle" font-family="monospace" font-size="11" fill="var(--label)" opacity="0.7">audio</text>
+
+  <!-- FastAPI (voice) -->
+  <rect x="205" y="270" width="125" height="64" rx="8" stroke-width="0.5" fill="#085041" stroke="#5DCAA5"/>
+  <text x="267" y="287" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="14" font-weight="500" fill="#9FE1CB">FastAPI</text>
+  <text x="267" y="305" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#5DCAA5">/transcribe</text>
+
+  <!-- Arrow: FastAPI -> Groq Whisper (voice) -->
+  <line x1="330" y1="302" x2="364" y2="302" stroke="var(--arrow)" stroke-width="1" opacity="0.6" marker-end="url(#arrow)"/>
+
+  <!-- Groq Whisper -->
+  <rect x="364" y="270" width="142" height="64" rx="8" stroke-width="0.5" fill="#633806" stroke="#EF9F27"/>
+  <text x="435" y="287" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="14" font-weight="500" fill="#FAC775">Groq Whisper</text>
+  <text x="435" y="305" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#EF9F27">language=en, ~1s</text>
+
+  <!-- Return arrow: Groq Whisper -> Browser query (transcript) -->
+  <path d="M435 334 L435 360 L95 360 L95 496" fill="none" stroke="var(--arrow-dash)" stroke-width="1" opacity="0.5" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+  <text x="265" y="375" text-anchor="middle" font-family="monospace" font-size="11" fill="var(--label)" opacity="0.7">transcript</text>
 
   <!-- ── DIVIDER ── -->
-  <text x="340" y="252" text-anchor="middle" font-family="monospace" font-size="12" fill="var(--label)" opacity="0.7">query flow — runs on every question</text>
-  <line x1="40" y1="260" x2="640" y2="260" stroke="var(--arrow)" stroke-width="0.5" opacity="0.2"/>
+  <text x="340" y="452" text-anchor="middle" font-family="monospace" font-size="12" fill="var(--label)" opacity="0.7">query flow — runs on every question</text>
+  <line x1="40" y1="460" x2="740" y2="460" stroke="var(--arrow)" stroke-width="0.5" opacity="0.2"/>
 
   <!-- Step labels -->
-  <text x="95"  y="286" text-anchor="middle" font-family="monospace" font-size="11" fill="var(--step)" opacity="0.6">1. user asks</text>
-  <text x="257" y="286" text-anchor="middle" font-family="monospace" font-size="11" fill="var(--step)" opacity="0.6">2. route</text>
-  <text x="433" y="286" text-anchor="middle" font-family="monospace" font-size="11" fill="var(--step)" opacity="0.6">3. find relevant chunks</text>
-  <text x="590" y="286" text-anchor="middle" font-family="monospace" font-size="11" fill="var(--step)" opacity="0.6">4. read from ChromaDB</text>
+  <text x="95"  y="486" text-anchor="middle" font-family="monospace" font-size="11" fill="var(--step)" opacity="0.6">1. user asks</text>
+  <text x="257" y="486" text-anchor="middle" font-family="monospace" font-size="11" fill="var(--step)" opacity="0.6">2. route</text>
+  <text x="433" y="486" text-anchor="middle" font-family="monospace" font-size="11" fill="var(--step)" opacity="0.6">3. retrieve &amp; rerank</text>
+  <text x="590" y="486" text-anchor="middle" font-family="monospace" font-size="11" fill="var(--step)" opacity="0.6">4. generate</text>
 
   <!-- Browser (query) -->
-  <rect x="40" y="296" width="110" height="64" rx="8" stroke-width="0.5" fill="#444441" stroke="#b4b2a9"/>
-  <text x="95" y="312" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="14" font-weight="500" fill="var(--text-primary)">Browser</text>
-  <text x="95" y="330" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="var(--text-secondary)">User types</text>
-  <text x="95" y="345" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="var(--text-secondary)">a question</text>
+  <rect x="40" y="496" width="120" height="64" rx="8" stroke-width="0.5" fill="#444441" stroke="#b4b2a9"/>
+  <text x="95" y="512" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="14" font-weight="500" fill="var(--text-primary)">Browser</text>
+  <text x="100" y="530" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="var(--text-secondary)">User types /</text>
+  <text x="100" y="545" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="var(--text-secondary)">speaks a question</text>
 
   <!-- Arrow: Browser -> FastAPI (query) -->
-  <line x1="150" y1="328" x2="188" y2="328" stroke="var(--arrow-dash)" stroke-width="1" opacity="0.6" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+  <line x1="160" y1="528" x2="188" y2="528" stroke="var(--arrow-dash)" stroke-width="1" opacity="0.6" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
 
   <!-- FastAPI (query) -->
-  <rect x="188" y="296" width="138" height="64" rx="8" stroke-width="0.5" fill="#085041" stroke="#5DCAA5"/>
-  <text x="257" y="312" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="14" font-weight="500" fill="#9FE1CB">FastAPI</text>
-  <text x="257" y="330" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#5DCAA5">Receives question</text>
-  <text x="257" y="345" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#5DCAA5">&amp; spec name</text>
+  <rect x="188" y="496" width="138" height="64" rx="8" stroke-width="0.5" fill="#085041" stroke="#5DCAA5"/>
+  <text x="257" y="512" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="14" font-weight="500" fill="#9FE1CB">FastAPI</text>
+  <text x="257" y="530" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#5DCAA5">Receives question</text>
+  <text x="257" y="545" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#5DCAA5">&amp; spec name</text>
 
   <!-- Arrow: FastAPI -> Retriever -->
-  <line x1="326" y1="328" x2="364" y2="328" stroke="var(--arrow)" stroke-width="1" opacity="0.6" marker-end="url(#arrow)"/>
+  <line x1="326" y1="528" x2="354" y2="528" stroke="var(--arrow)" stroke-width="1" opacity="0.6" marker-end="url(#arrow)"/>
 
-  <!-- Retriever -->
-  <rect x="364" y="296" width="138" height="64" rx="8" stroke-width="0.5" fill="#0C447C" stroke="#85B7EB"/>
-  <text x="433" y="312" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="14" font-weight="500" fill="#B5D4F4">Retriever</text>
-  <text x="433" y="330" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#85B7EB">Embeds question,</text>
-  <text x="433" y="345" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#85B7EB">fetches top 5 chunks</text>
+  <!-- Retriever (taller, hybrid retrieval) -->
+  <rect x="354" y="496" width="158" height="70" rx="8" stroke-width="0.5" fill="#0C447C" stroke="#85B7EB"/>
+  <text x="433" y="512" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="14" font-weight="500" fill="#B5D4F4">Retriever</text>
+  <text x="433" y="530" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#85B7EB">BM25 + dense retrieval,</text>
+  <text x="433" y="547" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#85B7EB">fused &amp; reranked</text>
 
-  <!-- Arrow: Retriever -> ChromaDB (dashed lookup) -->
-  <path d="M590 296 L590 216" fill="none" stroke="var(--lookup)" stroke-width="1" opacity="0.7" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
-  <text x="600" y="258" font-family="monospace" font-size="11" fill=
-  "var(--lookup)" opacity="0.6">lookup</text>
+  <!-- Lookup arrows: Retriever -> ChromaDB + BM25 (forked) -->
+  <path d="M433 496 L433 390 L590 390 L590 216" fill="none" stroke="var(--lookup)" stroke-width="1" opacity="0.7" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+  <!-- Branch to BM25 -->
+  <path d="M590 250 L590 250 L690 250 L690 216" fill="none" stroke="var(--lookup)" stroke-width="1" opacity="0.7" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+  <text x="510" y="384" font-family="monospace" font-size="11" fill="var(--lookup)" opacity="0.6">lookup</text>
 
   <!-- Arrow: Retriever -> LLM -->
-  <line x1="502" y1="328" x2="540" y2="328" stroke="var(--arrow)" stroke-width="1" opacity="0.6" marker-end="url(#arrow)"/>
+  <line x1="512" y1="536" x2="540" y2="536" stroke="var(--arrow)" stroke-width="1" opacity="0.6" marker-end="url(#arrow)"/>
 
   <!-- LLM -->
-  <rect x="540" y="296" width="100" height="64" rx="8" stroke-width="0.5" fill="#633806" stroke="#EF9F27"/>
-  <text x="590" y="312" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="14" font-weight="500" fill="#FAC775">LLM</text>
-  <text x="590" y="330" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#EF9F27">Llama 3.1 8B</text>
-  <text x="590" y="345" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#EF9F27">via HF router</text>
+  <rect x="540" y="496" width="100" height="80" rx="8" stroke-width="0.5" fill="#633806" stroke="#EF9F27"/>
+  <text x="590" y="516" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="14" font-weight="500" fill="#FAC775">LLM</text>
+  <text x="590" y="534" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#EF9F27">Llama 3.1 8B</text>
+  <text x="590" y="551" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#EF9F27">via HF router</text>
 
   <!-- Step labels row 2 -->
-  <text x="257" y="410" text-anchor="middle" font-family="monospace" font-size="11" fill="var(--step)" opacity="0.6">6. return to user</text>
-  <text x="433" y="410" text-anchor="middle" font-family="monospace" font-size="11" fill="var(--step)" opacity="0.6">5. score answer</text>
+  <text x="95" y="614" text-anchor="middle" font-family="monospace" font-size="11" fill="var(--step)" opacity="0.6">7. show results</text>
+  <text x="257" y="614" text-anchor="middle" font-family="monospace" font-size="11" fill="var(--step)" opacity="0.6">6. return to user</text>
+  <text x="433" y="614" text-anchor="middle" font-family="monospace" font-size="11" fill="var(--step)" opacity="0.6">5. score answer</text>
 
   <!-- Arrow: LLM -> Confidence (L-bend) -->
-  <path d="M590 360 L590 452 L502 452" fill="none" stroke="var(--arrow)" stroke-width="1" opacity="0.6" marker-end="url(#arrow)"/>
+  <path d="M590 576 L590 652 L502 652" fill="none" stroke="var(--arrow)" stroke-width="1" opacity="0.6" marker-end="url(#arrow)"/>
 
   <!-- Confidence -->
-  <rect x="364" y="420" width="138" height="64" rx="8" stroke-width="0.5" fill="#711B13" stroke="#F0997B"/>
-  <text x="433" y="438" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="14" font-weight="500" fill="#F5C4B3">Confidence</text>
-  <text x="433" y="455" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#F0997B">Compares answer vs</text>
-  <text x="433" y="468" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#F0997B">chunks -> 0–100 score</text>
+  <rect x="364" y="620" width="138" height="64" rx="8" stroke-width="0.5" fill="#711B13" stroke="#F0997B"/>
+  <text x="433" y="638" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="14" font-weight="500" fill="#F5C4B3">Confidence</text>
+  <text x="433" y="655" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#F0997B">HHEM score +</text>
+  <text x="433" y="668" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#F0997B">cosine score</text>
 
   <!-- Arrow: Confidence -> FastAPI -->
-  <line x1="364" y1="452" x2="326" y2="452" stroke="var(--arrow)" stroke-width="1" opacity="0.6" marker-end="url(#arrow)"/>
+  <line x1="364" y1="652" x2="326" y2="652" stroke="var(--arrow)" stroke-width="1" opacity="0.6" marker-end="url(#arrow)"/>
 
   <!-- FastAPI (response) -->
-  <rect x="188" y="420" width="138" height="64" rx="8" stroke-width="0.5" fill="#085041" stroke="#5DCAA5"/>
-  <text x="257" y="438" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="14" font-weight="500" fill="#9FE1CB">FastAPI</text>
-  <text x="257" y="455" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#5DCAA5">Packages answer,</text>
-  <text x="257" y="468" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#5DCAA5">sources, score</text>
+  <rect x="188" y="620" width="138" height="64" rx="8" stroke-width="0.5" fill="#085041" stroke="#5DCAA5"/>
+  <text x="257" y="638" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="14" font-weight="500" fill="#9FE1CB">FastAPI</text>
+  <text x="257" y="655" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="#5DCAA5">answer + score</text>
 
   <!-- Arrow: FastAPI -> Browser (response) -->
-  <line x1="188" y1="452" x2="150" y2="452" stroke="var(--arrow-dash)" stroke-width="1" opacity="0.6" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+  <line x1="188" y1="652" x2="150" y2="652" stroke="var(--arrow-dash)" stroke-width="1" opacity="0.6" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
 
   <!-- Browser (response) -->
-  <rect x="40" y="420" width="110" height="64" rx="8" stroke-width="0.5" fill="#444441" stroke="#b4b2a9"/>
-  <text x="95" y="438" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="14" font-weight="500" fill="var(--text-primary)">Browser</text>
-  <text x="95" y="455" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="var(--text-secondary)">Shows answer +</text>
-  <text x="95" y="468" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="var(--text-secondary)">sources + score</text>
+  <rect x="40" y="620" width="110" height="64" rx="8" stroke-width="0.5" fill="#444441" stroke="#b4b2a9"/>
+  <text x="95" y="638" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="14" font-weight="500" fill="var(--text-primary)">Browser</text>
+  <text x="95" y="655" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="12" fill="var(--text-secondary)">answer + sources</text>
 
   <!-- Legend -->
-  <rect x="40"  y="530" width="10" height="10" rx="2" fill="#5DCAA5"/>
-  <text x="56"  y="540" font-family="monospace" font-size="12" fill="var(--text-secondary)">API layer</text>
-  <rect x="130" y="530" width="10" height="10" rx="2" fill="#85B7EB"/>
-  <text x="146" y="540" font-family="monospace" font-size="12" fill="var(--text-secondary)">Processing</text>
-  <rect x="230" y="530" width="10" height="10" rx="2" fill="#AFA9EC"/>
-  <text x="246" y="540" font-family="monospace" font-size="12" fill="var(--text-secondary)">Storage</text>
-  <rect x="310" y="530" width="10" height="10" rx="2" fill="#EF9F27"/>
-  <text x="326" y="540" font-family="monospace" font-size="12" fill="var(--text-secondary)">LLM</text>
-  <rect x="364" y="530" width="10" height="10" rx="2" fill="#F0997B"/>
-  <text x="380" y="540" font-family="monospace" font-size="12" fill="var(--text-secondary)">Hallucination guard</text>
-  <rect x="519" y="530" width="10" height="10" rx="2" fill="#B4B2A9"/>
-  <text x="535" y="540" font-family="monospace" font-size="12" fill="var(--text-secondary)">User interface</text>
+  <rect x="40"  y="730" width="10" height="10" rx="2" fill="#5DCAA5"/>
+  <text x="56"  y="740" font-family="monospace" font-size="12" fill="var(--text-secondary)">API layer</text>
+  <rect x="130" y="730" width="10" height="10" rx="2" fill="#85B7EB"/>
+  <text x="146" y="740" font-family="monospace" font-size="12" fill="var(--text-secondary)">Processing</text>
+  <rect x="230" y="730" width="10" height="10" rx="2" fill="#AFA9EC"/>
+  <text x="246" y="740" font-family="monospace" font-size="12" fill="var(--text-secondary)">Storage</text>
+  <rect x="310" y="730" width="10" height="10" rx="2" fill="#EF9F27"/>
+  <text x="326" y="740" font-family="monospace" font-size="12" fill="var(--text-secondary)">LLM / ASR</text>
+  <rect x="400" y="730" width="10" height="10" rx="2" fill="#F0997B"/>
+  <text x="416" y="740" font-family="monospace" font-size="12" fill="var(--text-secondary)">Hallucination guard</text>
+  <rect x="570" y="730" width="10" height="10" rx="2" fill="#B4B2A9"/>
+  <text x="586" y="740" font-family="monospace" font-size="12" fill="var(--text-secondary)">User interface</text>
 </svg>
