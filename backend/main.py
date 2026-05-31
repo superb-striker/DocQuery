@@ -6,9 +6,10 @@ from dotenv import load_dotenv
 from langfuse import observe, get_client
 from ingest import fetch_specification, extract_chunks
 from vectorStore import client, store_chunks, retrieve_hybrid
-from llm import build_prompt, query_llm
+from llm import build_prompt, build_retrieval_rewrite_prompt, query_llm
 from confidence import score_confidence
 from loggerConfig import get_logger
+from agent import run_confidence_retry
 
 load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN", "")
@@ -63,6 +64,21 @@ async def run_generation(prompt: str):
     answer = await query_llm(prompt)
     langfuse.update_current_span(output={"answer": answer})
     return answer
+
+
+@observe(name="rewrite-retrieval-query")
+async def run_query_rewrite(question: str, answer: str, chunks: list[dict]):
+    prompt = build_retrieval_rewrite_prompt(question, answer, chunks)
+    langfuse.update_current_span(input={"question": question})
+    rewritten = (await query_llm(prompt)).strip().strip('"\'')
+    # Retrieval needs a compact query, not model commentary or multiple options.
+    rewritten = " ".join(rewritten.splitlines()[:1])[:500]
+    langfuse.update_current_span(output={"rewritten_query": rewritten})
+    return rewritten
+
+
+async def generate_answer(question: str, chunks: list[dict]):
+    return await run_generation(build_prompt(question, chunks))
 
 # Endpoints
 
@@ -145,6 +161,8 @@ async def query(req: QueryRequest):
       3. Build prompt from re-ranked chunks.
       4. Query LLM for final answer.
       5. Score confidence with HHEM + cosine hybrid.
+      6. If confidence is low, rewrite retrieval and make one corrective attempt.
+      7. Return the attempt with the stronger grounding score.
     """
     logger.info(f"Query received for specification: {req.specification_name}")
     # Log the user's question as the trace input — visible at the top level in Langfuse
@@ -152,39 +170,60 @@ async def query(req: QueryRequest):
         input={"question": req.question, "specification": req.specification_name}
     )
     try:
-        # Stage 1+2: hybrid retrieval + re-ranking
-        chunks = run_retrieval(req.question, req.specification_name)
-        if not chunks:
+        result = await run_confidence_retry(
+            question=req.question,
+            specification_name=req.specification_name,
+            retrieve=run_retrieval,
+            generate=generate_answer,
+            score=score_confidence,
+            rewrite=run_query_rewrite,
+        )
+        if not result.chunks:
             logger.warning("No chunks found for query.")
             raise HTTPException(
                 status_code=404,
                 detail="No specification found with that name. Ingest it first.",
             )
-        # Stage 3: build prompt
-        prompt = build_prompt(req.question, chunks)
-        logger.debug("Prompt built successfully.")
-        # Stage 4: LLM answer
-        answer = await run_generation(prompt)
-        if not answer:
+        if not result.answer:
             logger.error("LLM returned empty response.")
             raise HTTPException(status_code=500, detail="LLM failed to generate response.")
-        # Stage 5: confidence scoring
-        confidence = score_confidence(req.question, answer, chunks)
-        logger.info(f"Query processed successfully (confidence={confidence}).")
+        logger.info(
+            "Query processed successfully "
+            f"(confidence={result.confidence}, attempts={result.attempts}, "
+            f"selected_attempt={result.selected_attempt})."
+        )
         sources = [
             {
                 "endpoint": f"{c['metadata']['method']} {c['metadata']['path']}",
                 "summary": c['metadata']['summary']
             }
-            for c in chunks
+            for c in result.chunks
         ]
         # Log the answer + confidence as the trace output
         langfuse.set_current_trace_io(
-            output={"answer": answer, "confidence": confidence, "sources": sources}
+            output={
+                "answer": result.answer,
+                "confidence": result.confidence,
+                "sources": sources,
+                "agent": {
+                    "attempts": result.attempts,
+                    "retried": result.retried,
+                    "selected_attempt": result.selected_attempt,
+                },
+            }
         )
         # Confidence as a 0-1 metric — shows up in Langfuse's scores tab and dashboard charts
-        langfuse.score_current_trace(name="confidence", value=confidence / 100)
-        return {"answer": answer, "confidence": confidence, "sources": sources}
+        langfuse.score_current_trace(name="confidence", value=result.confidence / 100)
+        return {
+            "answer": result.answer,
+            "confidence": result.confidence,
+            "sources": sources,
+            "agent": {
+                "attempts": result.attempts,
+                "retried": result.retried,
+                "selected_attempt": result.selected_attempt,
+            },
+        }
     except HTTPException:
         raise
     except Exception as e:

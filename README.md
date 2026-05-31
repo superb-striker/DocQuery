@@ -40,6 +40,7 @@ The standard advice for understanding an API is "just paste the spec into ChatGP
 - **Persistent vector store** - ChromaDB and BM25 indexes persist to disk; specs survive restarts without re-ingestion.
 - **Voice input** - record a question via the browser's MediaRecorder API; audio is transcribed by Whisper via Groq (~1s) and populated into the query box automatically.
 - **Pipeline observability** - every query is traced end-to-end with Langfuse; retrieval span logs which endpoints were retrieved, the LLM generation span logs the full prompt and answer, and confidence scores are tracked as metrics across all queries.
+- **Confidence-gated self-correction** - when an answer scores below the grounding threshold, the query agent rewrites the retrieval query and makes one bounded retry, keeping the better-grounded answer.
 
 ---
 

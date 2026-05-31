@@ -45,6 +45,38 @@ def build_prompt(query: str, chunks: List[Dict]) -> str:
     logger.debug("Prompt built successfully.")
     return prompt
 
+
+def build_retrieval_rewrite_prompt(
+    question: str,
+    answer: str,
+    chunks: List[Dict],
+) -> str:
+    """Build a prompt that turns a weak first attempt into a better search query."""
+    endpoints = "\n".join(
+        f"- {chunk.get('metadata', {}).get('method', '')} "
+        f"{chunk.get('metadata', {}).get('path', '')}: "
+        f"{chunk.get('metadata', {}).get('summary', '')}"
+        for chunk in chunks
+    )
+    return f"""You rewrite search queries for an OpenAPI documentation retriever.
+
+The first retrieval produced a weakly grounded answer. Write one improved,
+standalone search query that preserves the user's intent while adding useful API
+terms, operation concepts, field names, or HTTP verbs. Avoid the endpoints that
+are clearly irrelevant. Do not answer the question and do not explain your work.
+Return only the rewritten search query on one line.
+
+ORIGINAL USER QUESTION:
+{question}
+
+FIRST ANSWER:
+{answer}
+
+ENDPOINTS ALREADY RETRIEVED:
+{endpoints}
+
+REWRITTEN SEARCH QUERY:"""
+
 # LLM Query
 async def query_llm(prompt: str) -> str:
     if not prompt:
