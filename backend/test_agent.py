@@ -108,6 +108,65 @@ class ConfidenceRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.confidence, 25)
         self.assertEqual(result.selected_attempt, 1)
 
+    async def test_compound_question_merges_deduplicated_evidence(self):
+        calls = []
+
+        def retrieve(query, specification_name):
+            calls.append(query)
+            shared = chunk("GET /pets/{id}")
+            if query == "create a pet":
+                return [chunk("POST /pets"), shared]
+            return [shared, chunk("DELETE /pets/{id}")]
+
+        async def generate(question, chunks):
+            return ",".join(item["metadata"]["path"] for item in chunks)
+
+        async def rewrite(question, answer, chunks):
+            self.fail("a confident planned answer should not retry")
+
+        async def decompose(question):
+            return ["create a pet", "delete a pet"]
+
+        result = await run_confidence_retry(
+            "How do I create and then delete a pet?",
+            "petstore",
+            retrieve,
+            generate,
+            lambda question, answer, chunks: 90,
+            rewrite,
+            decompose=decompose,
+        )
+
+        self.assertEqual(calls, ["create a pet", "delete a pet"])
+        self.assertEqual(len(result.chunks), 3)
+        self.assertEqual(result.subqueries, ["create a pet", "delete a pet"])
+
+    async def test_invalid_plan_falls_back_to_original_question(self):
+        calls = []
+
+        def retrieve(query, specification_name):
+            calls.append(query)
+            return [chunk("GET /pets")]
+
+        async def generate(question, chunks):
+            return "answer"
+
+        async def rewrite(question, answer, chunks):
+            return question
+
+        async def decompose(question):
+            return ["", 42, "   "]
+
+        result = await run_confidence_retry(
+            "list pets", "petstore", retrieve, generate,
+            lambda question, answer, chunks: 80,
+            rewrite,
+            decompose=decompose,
+        )
+
+        self.assertEqual(calls, ["list pets"])
+        self.assertEqual(result.subqueries, ["list pets"])
+
 
 if __name__ == "__main__":
     unittest.main()

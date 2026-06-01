@@ -6,7 +6,12 @@ from dotenv import load_dotenv
 from langfuse import observe, get_client
 from ingest import fetch_specification, extract_chunks
 from vectorStore import client, store_chunks, retrieve_hybrid
-from llm import build_prompt, build_retrieval_rewrite_prompt, query_llm
+from llm import (
+    build_prompt,
+    build_query_decomposition_prompt,
+    build_retrieval_rewrite_prompt,
+    query_llm,
+)
 from confidence import score_confidence
 from loggerConfig import get_logger
 from agent import run_confidence_retry
@@ -75,6 +80,22 @@ async def run_query_rewrite(question: str, answer: str, chunks: list[dict]):
     rewritten = " ".join(rewritten.splitlines()[:1])[:500]
     langfuse.update_current_span(output={"rewritten_query": rewritten})
     return rewritten
+
+
+@observe(name="decompose-query")
+async def run_query_decomposition(question: str) -> list[str]:
+    prompt = build_query_decomposition_prompt(question)
+    langfuse.update_current_span(input={"question": question})
+    raw_plan = (await query_llm(prompt)).strip()
+    try:
+        start = raw_plan.index("[")
+        end = raw_plan.rindex("]") + 1
+        parsed = json.loads(raw_plan[start:end])
+        plan = parsed if isinstance(parsed, list) else [question]
+    except (ValueError, json.JSONDecodeError):
+        plan = [question]
+    langfuse.update_current_span(output={"subqueries": plan})
+    return plan
 
 
 async def generate_answer(question: str, chunks: list[dict]):
@@ -157,12 +178,13 @@ async def query(req: QueryRequest):
     """
     Query pipeline:
       1. Hybrid retrieval : BM25 + dense in parallel, fused with RRF.
-      2. Cross-encoder re-ranking : top 5 from fused candidates.
-      3. Build prompt from re-ranked chunks.
-      4. Query LLM for final answer.
-      5. Score confidence with HHEM + cosine hybrid.
-      6. If confidence is low, rewrite retrieval and make one corrective attempt.
-      7. Return the attempt with the stronger grounding score.
+      2. Decompose compound questions into at most three retrieval tasks.
+      3. Cross-encoder re-ranking : top 5 from each task, then deduplicate.
+      4. Build prompt from the combined evidence.
+      5. Query LLM for final answer.
+      6. Score confidence with HHEM + cosine hybrid.
+      7. If confidence is low, rewrite retrieval and make one corrective attempt.
+      8. Return the attempt with the stronger grounding score.
     """
     logger.info(f"Query received for specification: {req.specification_name}")
     # Log the user's question as the trace input — visible at the top level in Langfuse
@@ -177,6 +199,7 @@ async def query(req: QueryRequest):
             generate=generate_answer,
             score=score_confidence,
             rewrite=run_query_rewrite,
+            decompose=run_query_decomposition,
         )
         if not result.chunks:
             logger.warning("No chunks found for query.")
@@ -209,6 +232,7 @@ async def query(req: QueryRequest):
                     "attempts": result.attempts,
                     "retried": result.retried,
                     "selected_attempt": result.selected_attempt,
+                    "subqueries": result.subqueries,
                 },
             }
         )
@@ -222,6 +246,7 @@ async def query(req: QueryRequest):
                 "attempts": result.attempts,
                 "retried": result.retried,
                 "selected_attempt": result.selected_attempt,
+                "subqueries": result.subqueries,
             },
         }
     except HTTPException:

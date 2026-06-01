@@ -77,6 +77,21 @@ ENDPOINTS ALREADY RETRIEVED:
 
 REWRITTEN SEARCH QUERY:"""
 
+
+def build_query_decomposition_prompt(question: str) -> str:
+    """Build a prompt that plans retrieval for compound API questions."""
+    return f"""You plan searches over OpenAPI endpoint documentation.
+
+If the user's question requires distinct API operations, split it into separate,
+standalone retrieval queries. If it is a simple question, keep it as one query.
+Return only a valid JSON array of one to three strings. Preserve concrete API
+nouns, field names, and constraints. Do not answer the question.
+
+USER QUESTION:
+{question}
+
+JSON QUERY PLAN:"""
+
 # LLM Query
 async def query_llm(prompt: str) -> str:
     if not prompt:
