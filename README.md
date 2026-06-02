@@ -42,6 +42,7 @@ The standard advice for understanding an API is "just paste the spec into ChatGP
 - **Pipeline observability** - every query is traced end-to-end with Langfuse; retrieval span logs which endpoints were retrieved, the LLM generation span logs the full prompt and answer, and confidence scores are tracked as metrics across all queries.
 - **Confidence-gated self-correction** - when an answer scores below the grounding threshold, the query agent rewrites the retrieval query and makes one bounded retry, keeping the better-grounded answer.
 - **Multi-step query planning** - compound questions are decomposed into at most three focused retrieval queries; endpoint evidence is deduplicated and combined before answer generation.
+- **Conversational follow-ups** - the browser sends the last three successful exchanges to resolve references such as "that endpoint" into standalone retrieval questions; history is not stored server-side and resets when switching specifications.
 
 ---
 

@@ -8,6 +8,7 @@ Generate = Callable[[str, Chunks], Awaitable[str]]
 Score = Callable[[str, str, Chunks], int]
 Rewrite = Callable[[str, str, Chunks], Awaitable[str]]
 Decompose = Callable[[str], Awaitable[List[str]]]
+Contextualize = Callable[[str, List[Dict]], Awaitable[str]]
 
 
 @dataclass
@@ -27,6 +28,35 @@ class AgentResult:
     retried: bool
     selected_attempt: int
     subqueries: List[str] = field(default_factory=list)
+
+
+async def resolve_follow_up(
+    question: str,
+    history: List[Dict],
+    contextualize: Contextualize,
+    max_turns: int = 3,
+) -> str:
+    """Resolve conversational references while preserving a safe fallback."""
+    normalized_history = []
+    for turn in history[-max(1, max_turns):]:
+        if not isinstance(turn, dict):
+            continue
+        previous_question = str(turn.get("question", "")).strip()[:1000]
+        previous_answer = str(turn.get("answer", "")).strip()[:2000]
+        if previous_question and previous_answer:
+            normalized_history.append({
+                "question": previous_question,
+                "answer": previous_answer,
+            })
+    if not normalized_history:
+        return question
+
+    try:
+        resolved = await contextualize(question, normalized_history)
+    except Exception:
+        return question
+    resolved = " ".join(resolved.strip().strip('"\'').splitlines()[:1])[:1000]
+    return resolved or question
 
 
 async def run_confidence_retry(

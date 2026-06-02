@@ -1,6 +1,6 @@
 import unittest
 
-from backend.agent import run_confidence_retry
+from backend.agent import resolve_follow_up, run_confidence_retry
 
 
 def chunk(endpoint: str):
@@ -166,6 +166,46 @@ class ConfidenceRetryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(calls, ["list pets"])
         self.assertEqual(result.subqueries, ["list pets"])
+
+
+class FollowUpResolutionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_follow_up_is_resolved_from_recent_history(self):
+        history_seen = []
+
+        async def contextualize(question, history):
+            history_seen.extend(history)
+            return "Which request fields does POST /pets require?"
+
+        resolved = await resolve_follow_up(
+            "What fields does that need?",
+            [{"question": "How do I create a pet?", "answer": "Use POST /pets."}],
+            contextualize,
+        )
+
+        self.assertEqual(resolved, "Which request fields does POST /pets require?")
+        self.assertEqual(len(history_seen), 1)
+
+    async def test_empty_history_skips_contextualization(self):
+        async def contextualize(question, history):
+            self.fail("contextualization should not run without history")
+
+        resolved = await resolve_follow_up(
+            "How do I list pets?", [], contextualize
+        )
+
+        self.assertEqual(resolved, "How do I list pets?")
+
+    async def test_contextualization_failure_preserves_question(self):
+        async def contextualize(question, history):
+            raise RuntimeError("provider unavailable")
+
+        resolved = await resolve_follow_up(
+            "What does that return?",
+            [{"question": "List pets", "answer": "Use GET /pets."}],
+            contextualize,
+        )
+
+        self.assertEqual(resolved, "What does that return?")
 
 
 if __name__ == "__main__":

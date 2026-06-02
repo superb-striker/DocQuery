@@ -1,12 +1,13 @@
 import json, os, httpx
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from langfuse import observe, get_client
 from ingest import fetch_specification, extract_chunks
 from vectorStore import client, store_chunks, retrieve_hybrid
 from llm import (
+    build_contextualization_prompt,
     build_prompt,
     build_query_decomposition_prompt,
     build_retrieval_rewrite_prompt,
@@ -14,7 +15,7 @@ from llm import (
 )
 from confidence import score_confidence
 from loggerConfig import get_logger
-from agent import run_confidence_retry
+from agent import resolve_follow_up, run_confidence_retry
 
 load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN", "")
@@ -35,9 +36,14 @@ app.add_middleware(
 class IngestRequest(BaseModel):
     specification_url: str
 
+class ConversationTurn(BaseModel):
+    question: str
+    answer: str
+
 class QueryRequest(BaseModel):
     question: str
     specification_name: str
+    history: list[ConversationTurn] = Field(default_factory=list)
 
 
 # Observed helpers
@@ -96,6 +102,17 @@ async def run_query_decomposition(question: str) -> list[str]:
         plan = [question]
     langfuse.update_current_span(output={"subqueries": plan})
     return plan
+
+
+@observe(name="contextualize-follow-up")
+async def run_query_contextualization(question: str, history: list[dict]) -> str:
+    prompt = build_contextualization_prompt(question, history)
+    langfuse.update_current_span(
+        input={"question": question, "history_length": len(history)}
+    )
+    resolved = (await query_llm(prompt)).strip()
+    langfuse.update_current_span(output={"resolved_question": resolved})
+    return resolved
 
 
 async def generate_answer(question: str, chunks: list[dict]):
@@ -177,23 +194,35 @@ async def ingest_file(file: UploadFile = File(...)):
 async def query(req: QueryRequest):
     """
     Query pipeline:
-      1. Hybrid retrieval : BM25 + dense in parallel, fused with RRF.
+      1. Resolve conversational follow-ups into a standalone question.
       2. Decompose compound questions into at most three retrieval tasks.
-      3. Cross-encoder re-ranking : top 5 from each task, then deduplicate.
-      4. Build prompt from the combined evidence.
-      5. Query LLM for final answer.
-      6. Score confidence with HHEM + cosine hybrid.
-      7. If confidence is low, rewrite retrieval and make one corrective attempt.
-      8. Return the attempt with the stronger grounding score.
+      3. Hybrid retrieval : BM25 + dense, fused with RRF and re-ranked.
+      4. Deduplicate and combine evidence across retrieval tasks.
+      5. Query the LLM and score grounding confidence.
+      6. If confidence is low, rewrite retrieval and make one corrective attempt.
+      7. Return the attempt with the stronger grounding score.
     """
     logger.info(f"Query received for specification: {req.specification_name}")
     # Log the user's question as the trace input — visible at the top level in Langfuse
     langfuse.set_current_trace_io(
-        input={"question": req.question, "specification": req.specification_name}
+        input={
+            "question": req.question,
+            "specification": req.specification_name,
+            "history_length": len(req.history),
+        }
     )
     try:
+        history = [
+            {"question": turn.question, "answer": turn.answer}
+            for turn in req.history
+        ]
+        resolved_question = await resolve_follow_up(
+            req.question,
+            history,
+            run_query_contextualization,
+        )
         result = await run_confidence_retry(
-            question=req.question,
+            question=resolved_question,
             specification_name=req.specification_name,
             retrieve=run_retrieval,
             generate=generate_answer,
@@ -233,6 +262,7 @@ async def query(req: QueryRequest):
                     "retried": result.retried,
                     "selected_attempt": result.selected_attempt,
                     "subqueries": result.subqueries,
+                    "resolved_question": resolved_question,
                 },
             }
         )
@@ -247,6 +277,7 @@ async def query(req: QueryRequest):
                 "retried": result.retried,
                 "selected_attempt": result.selected_attempt,
                 "subqueries": result.subqueries,
+                "resolved_question": resolved_question,
             },
         }
     except HTTPException:

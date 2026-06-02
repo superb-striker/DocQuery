@@ -23,6 +23,7 @@ export default function DocQuery() {
   const [result, setResult] = useState(null);
   const [querying, setQuerying] = useState(false);
   const [animateResult, setAnimateResult] = useState(false);
+  const [history, setHistory] = useState([]);
 
   // Shared error state (ingest errors bubble up via onError; query errors set here directly)
   const [error, setError] = useState(null);
@@ -54,10 +55,19 @@ export default function DocQuery() {
   const handleSpecLoaded = ({ name }) => {
     setLoadedSpecs(prev => prev.includes(name) ? prev : [...prev, name]);
     setActiveSpec(name);
+    setHistory([]);
+    setResult(null);
+  };
+
+  const handleSelectSpec = name => {
+    setActiveSpec(name);
+    setHistory([]);
+    setResult(null);
   };
 
   const handleQuery = async () => {
     if (!question.trim() || !activeSpec) return;
+    const submittedQuestion = question.trim();
     setQuerying(true);
     setResult(null);
     setError(null);
@@ -65,11 +75,19 @@ export default function DocQuery() {
       const res = await fetch("http://127.0.0.1:8000/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, specification_name: activeSpec }),
+        body: JSON.stringify({
+          question: submittedQuestion,
+          specification_name: activeSpec,
+          history,
+        }),
       });
       const data = await res.json();
       if (!res.ok) { setError(classifyError(data.detail, "Query")); return; }
       setResult(data);
+      setHistory(previous => [
+        ...previous,
+        { question: submittedQuestion, answer: data.answer },
+      ].slice(-3));
     } catch (e) {
       setError(classifyError(e.message, "Query"));
     } finally {
@@ -151,7 +169,7 @@ export default function DocQuery() {
             t={t}
             loadedSpecs={loadedSpecs}
             activeSpec={activeSpec}
-            onSelectSpec={setActiveSpec}
+            onSelectSpec={handleSelectSpec}
             question={question}
             onQuestion={setQuestion}
             querying={querying}

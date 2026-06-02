@@ -92,6 +92,28 @@ USER QUESTION:
 
 JSON QUERY PLAN:"""
 
+
+def build_contextualization_prompt(question: str, history: List[Dict]) -> str:
+    """Build a prompt that resolves references in a conversational follow-up."""
+    conversation = "\n\n".join(
+        f"Previous question: {turn['question']}\nPrevious answer: {turn['answer']}"
+        for turn in history
+    )
+    return f"""Rewrite the latest API documentation question as a standalone query.
+
+Use the conversation only to resolve references such as "that endpoint", "it",
+or "those fields". Preserve the latest question's intent. If it already stands
+alone or changes topic, return it unchanged. Do not answer the question and do
+not add facts. Return only one standalone question on one line.
+
+CONVERSATION:
+{conversation}
+
+LATEST QUESTION:
+{question}
+
+STANDALONE QUESTION:"""
+
 # LLM Query
 async def query_llm(prompt: str) -> str:
     if not prompt:

@@ -122,6 +122,7 @@ export function QueryPanel({
             <button
               key={name}
               onClick={() => onSelectSpec(name)}
+              disabled={querying}
               style={{
                 padding: "5px 14px", borderRadius: 999,
                 border: `1px solid ${activeSpec === name ? t.pillActiveBorder : t.pillInactiveBorder}`,
@@ -129,6 +130,8 @@ export function QueryPanel({
                 color: activeSpec === name ? t.pillActiveText : t.pillInactiveText,
                 fontSize: 12, fontFamily: "'DM Mono', monospace",
                 transition: "all 0.2s",
+                cursor: querying ? "not-allowed" : "pointer",
+                opacity: querying ? 0.55 : 1,
               }}
             >
               {name}
