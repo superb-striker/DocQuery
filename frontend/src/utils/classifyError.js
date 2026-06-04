@@ -25,7 +25,7 @@ export function classifyError(detail, context) {
   if (detail.includes("LLM failed"))
     return {
       msg: "The LLM returned an empty response.",
-      hint: "The HuggingFace model may be rate-limited or offline. Try again in a moment.",
+      hint: "The selected model may be rate-limited or offline. Try the other provider.",
     };
   if (detail.includes("Internal server error") && context === "Query")
     return {

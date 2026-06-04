@@ -1,20 +1,120 @@
-import httpx, os
-from typing import Dict, List
+import os
+from contextvars import ContextVar
+
+import httpx
 from dotenv import load_dotenv
 from loggerConfig import get_logger
 
 logger = get_logger("llm")
 
-# Env 
+# Environment
 load_dotenv()
-HF_TOKEN = os.getenv("HF_TOKEN")
-if not HF_TOKEN:
-    logger.critical("HF_TOKEN is missing in environment variables")
-    raise ValueError("HF_TOKEN not found")
-API_URL = "https://router.huggingface.co/v1/chat/completions"
+
+PROVIDERS = {
+    "groq": {
+        "label": "Groq",
+        "api_url": "https://api.groq.com/openai/v1/chat/completions",
+        "api_key_env": "GROQ_API_KEY",
+        "model": "openai/gpt-oss-120b",
+        # Keep Groq's free-tier token use deliberately lower.
+        "max_chunks": 8,
+    },
+    "gemini": {
+        "label": "Gemini",
+        "api_url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        "api_key_env": "GEMINI_API_KEY",
+        "model": "gemini-3.8-flash",
+        "max_chunks": 15,
+    },
+    "huggingface": {
+        "label": "Hugging Face",
+        "api_url": "https://router.huggingface.co/v1/chat/completions",
+        "api_key_env": "HF_TOKEN",
+        "model": "meta-llama/Llama-3.1-8B-Instruct:novita",
+        "max_chunks": 15,
+    },
+}
+
+_LLM_METRICS: ContextVar[dict | None] = ContextVar("llm_metrics", default=None)
+
+
+class LLMProviderError(RuntimeError):
+    """A safe, user-facing error from the selected LLM provider."""
+
+
+def get_provider_config(provider: str) -> dict:
+    try:
+        return PROVIDERS[provider]
+    except KeyError as exc:
+        supported = ", ".join(PROVIDERS)
+        raise LLMProviderError(
+            f"Unknown LLM provider '{provider}'. Choose one of: {supported}."
+        ) from exc
+
+
+def provider_catalog() -> list[dict]:
+    """Return provider metadata without exposing API keys."""
+    return [
+        {
+            "id": provider,
+            "label": config["label"],
+            "model": config["model"],
+            "max_chunks": config["max_chunks"],
+            "available": bool(os.getenv(config["api_key_env"])),
+        }
+        for provider, config in PROVIDERS.items()
+    ]
+
+
+def reset_llm_metrics() -> None:
+    _LLM_METRICS.set({
+        "calls": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    })
+
+
+def get_llm_metrics() -> dict:
+    return dict(_LLM_METRICS.get() or {})
+
+
+def _record_usage(data: dict) -> None:
+    current = dict(_LLM_METRICS.get() or {})
+    usage = data.get("usage") or {}
+    current["calls"] = current.get("calls", 0) + 1
+    for field in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        current[field] = current.get(field, 0) + int(usage.get(field) or 0)
+    _LLM_METRICS.set(current)
+
+
+def build_llm_request(prompt: str, provider: str) -> tuple[str, dict, dict]:
+    """Build an OpenAI-compatible request for a configured provider."""
+    config = get_provider_config(provider)
+    api_key = os.getenv(config["api_key_env"])
+    if not api_key:
+        raise LLMProviderError(
+            f"{config['label']} is not configured. Add {config['api_key_env']} to .env."
+        )
+
+    payload = {
+        "model": config["model"],
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 600,
+        "temperature": 0.1,
+        # Groq accepts at most four stop sequences; these work for every provider.
+        "stop": ["USER QUESTION:", "[INST]", "SPEC SECTIONS:", "\n\nQUESTION"],
+    }
+    if provider == "gemini":
+        payload["reasoning_effort"] = "low"
+    return (
+        config["api_url"],
+        {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        payload,
+    )
 
 # Prompt Builder 
-def build_prompt(query: str, chunks: List[Dict]) -> str:
+def build_prompt(query: str, chunks: list[dict]) -> str:
     if not query:
         logger.warning("Empty query passed to build_prompt.")
     if not chunks:
@@ -54,7 +154,7 @@ def build_prompt(query: str, chunks: List[Dict]) -> str:
 def build_retrieval_rewrite_prompt(
     question: str,
     answer: str,
-    chunks: List[Dict],
+    chunks: list[dict],
 ) -> str:
     """Build a prompt that turns a weak first attempt into a better search query."""
     endpoints = "\n".join(
@@ -98,7 +198,7 @@ USER QUESTION:
 JSON QUERY PLAN:"""
 
 
-def build_contextualization_prompt(question: str, history: List[Dict]) -> str:
+def build_contextualization_prompt(question: str, history: list[dict]) -> str:
     """Build a prompt that resolves references in a conversational follow-up."""
     conversation = "\n\n".join(
         f"Previous question: {turn['question']}\nPrevious answer: {turn['answer']}"
@@ -122,7 +222,7 @@ STANDALONE QUESTION:"""
 
 def build_specification_routing_prompt(
     question: str,
-    specification_names: List[str],
+    specification_names: list[str],
 ) -> str:
     """Build a prompt that selects relevant API specifications."""
     choices = "\n".join(f"- {name}" for name in specification_names)
@@ -141,58 +241,57 @@ USER QUESTION:
 JSON SPECIFICATION SELECTION:"""
 
 # LLM Query
-async def query_llm(prompt: str) -> str:
+async def query_llm(prompt: str, provider: str = "groq") -> str:
     if not prompt:
-        logger.error("Empty prompt passed to as query.")
-        return ""
+        raise LLMProviderError("Cannot query an LLM with an empty prompt.")
+    config = get_provider_config(provider)
+    api_url, headers, payload = build_llm_request(prompt, provider)
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            logger.info("Sending request to Hugging Face API")
+        async with httpx.AsyncClient(timeout=60) as client:
+            logger.info(
+                f"Sending request to {config['label']} ({config['model']})"
+            )
             response = await client.post(
-                API_URL,
-                headers={"Authorization": f"Bearer {HF_TOKEN}"},
-                json={
-                    "model": "meta-llama/Llama-3.1-8B-Instruct:novita",
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 400,
-                    "temperature": 0.1,
-                    "stop": [
-                        "However,",
-                        "USER QUESTION:",    # stops hallucinated follow-ups
-                        "QUESTION:",
-                        "[INST]",
-                        "\n\nNote:",         # stops unnecessary caveats
-                        "SPEC SECTIONS:",   
-                        "\n\nQUESTION",     
-                    ]
-                }
+                api_url,
+                headers=headers,
+                json=payload,
             )
             response.raise_for_status()
             try:
                 data = response.json()
-                if "error" in data:
-                    logger.error(f"HF API error: {data['error']}")
-                    return ""
-                # also guard against missing choices
-                if not data.get("choices"):
-                    logger.error(f"Unexpected response format, no choices: {data}")
-                    return ""
-            except Exception:
-                logger.error("Failed to parse JSON response.")
-                return ""
+            except ValueError as exc:
+                raise LLMProviderError(
+                    f"{config['label']} returned an invalid response."
+                ) from exc
+            if data.get("error") or not data.get("choices"):
+                raise LLMProviderError(
+                    f"{config['label']} returned no answer. Try again in a moment."
+                )
             try:
                 answer = data["choices"][0]["message"]["content"].strip()
             except (KeyError, IndexError, TypeError) as e:
-                logger.error(f"Unexpected response format: {e}.")
-                return ""
-            logger.info("Received response from LLM.")
+                raise LLMProviderError(
+                    f"{config['label']} returned an unexpected response format."
+                ) from e
+            if not answer:
+                raise LLMProviderError(
+                    f"{config['label']} returned an empty answer. Try again in a moment."
+                )
+            _record_usage(data)
+            logger.info(f"Received response from {config['label']}.")
             return answer
-    except httpx.RequestError as e:
-        logger.error(f"Request failed: {e}.")
-        return ""
     except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error: {e.response.status_code}.")
-        return ""
-    except Exception as e:
-        logger.critical(f"Unexpected error in query_llm: {e}.")
-        return ""
+        status = e.response.status_code
+        logger.error(f"{config['label']} HTTP error: {status}.")
+        if status == 429:
+            detail = "rate limit reached; wait briefly or try the other provider"
+        elif status in (401, 403):
+            detail = f"authentication failed; check {config['api_key_env']}"
+        else:
+            detail = f"request failed with HTTP {status}"
+        raise LLMProviderError(f"{config['label']} {detail}.") from e
+    except httpx.RequestError as e:
+        logger.error(f"{config['label']} request failed: {e}.")
+        raise LLMProviderError(
+            f"Could not reach {config['label']}. Check your connection and try again."
+        ) from e

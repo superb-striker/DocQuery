@@ -7,3 +7,4 @@ python-dotenv
 python-multipart
 rank-bm25
 langfuse
+colorama

@@ -17,12 +17,16 @@ const ALL_SPECIFICATIONS = "__all__";
  * @prop {function}  onQuestion   - (value: string) => void
  * @prop {boolean}   querying     - Whether a query is in-flight.
  * @prop {function}  onQuery      - () => void
+ * @prop {string}    llmProvider  - Selected provider id.
+ * @prop {object[]}  llmProviders - Available provider metadata.
+ * @prop {function}  onSelectProvider - (provider: string) => void
  */
 export function QueryPanel({
   dark, t,
   loadedSpecs, activeSpec, onSelectSpec,
   question, onQuestion,
   querying, onQuery,
+  llmProvider, llmProviders, onSelectProvider,
 }) {
   // Voice state: "idle" | "recording" | "transcribing"
   const [voiceState, setVoiceState] = useState("idle");
@@ -158,6 +162,43 @@ export function QueryPanel({
           color: t.textLabel, letterSpacing: "0.12em", marginBottom: 14, fontWeight: 600,
         }}>
           ASK ANYTHING
+        </div>
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+          marginBottom: 14,
+        }}>
+          <span style={{
+            fontSize: 10, color: t.textMuted,
+            fontFamily: "'DM Mono', monospace", marginRight: 2,
+          }}>
+            model:
+          </span>
+          {llmProviders.map(provider => {
+            const selected = llmProvider === provider.id;
+            const disabled = querying || !provider.available;
+            return (
+              <button
+                key={provider.id}
+                type="button"
+                onClick={() => onSelectProvider(provider.id)}
+                disabled={disabled}
+                title={provider.available
+                  ? provider.model
+                  : `${provider.label} API key is not configured`}
+                style={{
+                  padding: "4px 10px", borderRadius: 7,
+                  border: `1px solid ${selected ? t.pillActiveBorder : t.pillInactiveBorder}`,
+                  background: selected ? t.pillActive : t.pillInactive,
+                  color: selected ? t.pillActiveText : t.pillInactiveText,
+                  fontSize: 10, fontFamily: "'DM Mono', monospace",
+                  cursor: disabled ? "not-allowed" : "pointer",
+                  opacity: provider.available ? (querying ? 0.55 : 1) : 0.4,
+                }}
+              >
+                {provider.label}{provider.available ? "" : " · no key"}
+              </button>
+            );
+          })}
         </div>
         <textarea
           value={question}

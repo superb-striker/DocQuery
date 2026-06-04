@@ -1,15 +1,14 @@
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Dict, List, Optional
 
-
-Chunks = List[Dict]
+Chunks = list[dict]
 Retrieve = Callable[[str, str], Chunks]
 Generate = Callable[[str, Chunks], Awaitable[str]]
 Score = Callable[[str, str, Chunks], int]
 Rewrite = Callable[[str, str, Chunks], Awaitable[str]]
-Decompose = Callable[[str], Awaitable[List[str]]]
-Contextualize = Callable[[str, List[Dict]], Awaitable[str]]
-RouteSpecifications = Callable[[str, List[str]], Awaitable[List[str]]]
+Decompose = Callable[[str], Awaitable[list[str]]]
+Contextualize = Callable[[str, list[dict]], Awaitable[str]]
+RouteSpecifications = Callable[[str, list[str]], Awaitable[list[str]]]
 
 
 @dataclass
@@ -28,12 +27,12 @@ class AgentResult:
     attempts: int
     retried: bool
     selected_attempt: int
-    subqueries: List[str] = field(default_factory=list)
+    subqueries: list[str] = field(default_factory=list)
 
 
 async def resolve_follow_up(
     question: str,
-    history: List[Dict],
+    history: list[dict],
     contextualize: Contextualize,
     max_turns: int = 3,
 ) -> str:
@@ -62,10 +61,10 @@ async def resolve_follow_up(
 
 async def select_specifications(
     question: str,
-    available: List[str],
+    available: list[str],
     route: RouteSpecifications,
     max_specs: int = 3,
-) -> List[str]:
+) -> list[str]:
     """Select a bounded set of collections for a cross-spec query."""
     available = list(dict.fromkeys(name for name in available if name))
     limit = max(1, max_specs)
@@ -98,7 +97,7 @@ async def run_confidence_retry(
     score: Score,
     rewrite: Rewrite,
     confidence_threshold: int = 70,
-    decompose: Optional[Decompose] = None,
+    decompose: Decompose | None = None,
     max_subqueries: int = 3,
     max_chunks: int = 15,
 ) -> AgentResult:
@@ -140,7 +139,9 @@ async def run_confidence_retry(
                 subqueries=subqueries,
             )
 
-        retry_chunks = retrieve(refined_query, specification_name)
+        retry_chunks = retrieve(refined_query, specification_name) or []
+        if len(retry_chunks) > max_chunks:
+            retry_chunks = retry_chunks[:max_chunks]
         if not retry_chunks:
             return _to_result(
                 first, attempts=2, retried=True, selected_attempt=1,
@@ -180,9 +181,9 @@ async def run_confidence_retry(
 
 async def _build_query_plan(
     question: str,
-    decompose: Optional[Decompose],
+    decompose: Decompose | None,
     max_subqueries: int,
-) -> List[str]:
+) -> list[str]:
     if decompose is None:
         return [question]
     try:
@@ -206,7 +207,7 @@ async def _build_query_plan(
 
 
 def _retrieve_and_merge(
-    queries: List[str],
+    queries: list[str],
     specification_name: str,
     retrieve: Retrieve,
     max_chunks: int,
@@ -241,7 +242,7 @@ def _to_result(
     attempts: int,
     retried: bool,
     selected_attempt: int,
-    subqueries: List[str],
+    subqueries: list[str],
 ) -> AgentResult:
     return AgentResult(
         answer=attempt.answer,

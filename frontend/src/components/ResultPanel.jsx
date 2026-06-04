@@ -31,11 +31,26 @@ export function ResultPanel({ result, dark, t, animate }) {
           display: "flex", justifyContent: "space-between",
           alignItems: "flex-start", marginBottom: 20,
         }}>
-          <div style={{
-            fontSize: 11, fontFamily: "'DM Mono', monospace",
-            color: t.textLabel, letterSpacing: "0.12em", fontWeight: 600,
-          }}>
-            ANSWER
+          <div>
+            <div style={{
+              fontSize: 11, fontFamily: "'DM Mono', monospace",
+              color: t.textLabel, letterSpacing: "0.12em", fontWeight: 600,
+            }}>
+              ANSWER
+            </div>
+            {result.llm && (
+              <div style={{
+                display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8,
+                color: t.textMuted, fontSize: 10,
+                fontFamily: "'DM Mono', monospace",
+              }}>
+                <span>{result.llm.label} · {result.llm.model}</span>
+                <span>· {result.latency_ms} ms</span>
+                <span>· {result.llm.calls} call{result.llm.calls === 1 ? "" : "s"}</span>
+                {result.llm.total_tokens > 0 && <span>· {result.llm.total_tokens} tokens</span>}
+                <span>· {result.llm.max_chunks} chunks max</span>
+              </div>
+            )}
           </div>
           <ConfidenceRing value={result.confidence} dark={dark} />
         </div>

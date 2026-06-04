@@ -24,6 +24,12 @@ export default function DocQuery() {
   const [querying, setQuerying] = useState(false);
   const [animateResult, setAnimateResult] = useState(false);
   const [history, setHistory] = useState([]);
+  const [llmProvider, setLlmProvider] = useState("groq");
+  const [llmProviders, setLlmProviders] = useState([
+    { id: "groq", label: "Groq", model: "openai/gpt-oss-120b", available: true },
+    { id: "gemini", label: "Gemini", model: "gemini-3.8-flash", available: true },
+    { id: "huggingface", label: "Hugging Face", model: "Llama 3.1 8B", available: true },
+  ]);
 
   // Shared error state (ingest errors bubble up via onError; query errors set here directly)
   const [error, setError] = useState(null);
@@ -39,6 +45,25 @@ export default function DocQuery() {
         }
       })
       .catch(() => {}); // backend may not be up yet — fail silently
+  }, []);
+
+  useEffect(() => {
+    fetch("http://127.0.0.1:8000/llm/providers")
+      .then(r => r.json())
+      .then(data => {
+        if (data.providers?.length) {
+          setLlmProviders(data.providers);
+          setLlmProvider(current => {
+            const currentIsAvailable = data.providers.some(
+              provider => provider.id === current && provider.available
+            );
+            return currentIsAvailable
+              ? current
+              : data.providers.find(provider => provider.available)?.id || current;
+          });
+        }
+      })
+      .catch(() => {});
   }, []);
 
   // Re-trigger typewriter animation each time a new result arrives
@@ -65,6 +90,13 @@ export default function DocQuery() {
     setResult(null);
   };
 
+  const handleSelectProvider = provider => {
+    setLlmProvider(provider);
+    setHistory([]);
+    setResult(null);
+    setError(null);
+  };
+
   const handleQuery = async () => {
     if (!question.trim() || !activeSpec) return;
     const submittedQuestion = question.trim();
@@ -79,6 +111,7 @@ export default function DocQuery() {
           question: submittedQuestion,
           specification_name: activeSpec,
           history,
+          llm_provider: llmProvider,
         }),
       });
       const data = await res.json();
@@ -174,6 +207,9 @@ export default function DocQuery() {
             onQuestion={setQuestion}
             querying={querying}
             onQuery={handleQuery}
+            llmProvider={llmProvider}
+            llmProviders={llmProviders}
+            onSelectProvider={handleSelectProvider}
           />
 
           <ErrorBanner error={error} dark={dark} />

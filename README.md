@@ -106,6 +106,7 @@ Create `.env`:
 ```env
 HF_TOKEN=your_token_here
 GROQ_API_KEY=your_groq_key_here
+GEMINI_API_KEY=your_gemini_key_here
 ```
 
 Start the backend server:
@@ -277,15 +278,19 @@ DocQuery/
 
 | Variable | Required | Description |
 |---|---|---|
-| `HF_TOKEN` | Yes | HuggingFace access token for the inference router |
-| `GROQ_API_KEY` | Yes | Groq API key for Whisper voice transcription |
+| `HF_TOKEN` | Optional | Hugging Face inference token; only needed when that provider is selected |
+| `GROQ_API_KEY` | Recommended | Groq API key for GPT-OSS answers and Whisper voice transcription |
+| `GEMINI_API_KEY` | Recommended | Google AI Studio key for Gemini answers |
 | `LANGFUSE_PUBLIC_KEY` | Yes | Langfuse project public key |
 | `LANGFUSE_SECRET_KEY` | Yes | Langfuse project secret key |
 | `LANGFUSE_HOST` | Yes | Langfuse host (e.g. `https://jp.cloud.langfuse.com`) |
 
-### Changing the LLM
+### Comparing LLM providers
 
-The model is set in `llm.py`. Any model available on the [HuggingFace router](https://huggingface.co/docs/inference-providers) works as a drop-in replacement.
+Choose Groq, Gemini, or Hugging Face above the question box. Each response shows
+the provider, model, latency, LLM call count, token usage (when reported), and
+evidence budget. Groq receives at most 8 retrieved chunks to stay friendlier to
+free-tier token limits; Gemini and Hugging Face receive at most 15.
 
 ### Resetting the Vector Store
 
@@ -299,7 +304,7 @@ Remove-Item -Recurse -Force chromaDB, bm25_indexes # Windows PowerShell
 
 ## Limitations
 
-- **HuggingFace free tier** - rate limited to the LLM; responses may take 5–15 seconds under load. For faster LLM responses, swap to Groq in `llm.py`.
+- **Provider free tiers** - Groq, Gemini, and Hugging Face each enforce their own quotas and rate limits; the UI reports provider errors and lets you switch models.
 - **Schema depth** - `$ref` resolution is capped at 6 levels. Deeply nested `$ref` chains beyond that are not resolved.
 - **YAML specs** - only JSON OpenAPI specs are supported. For YAML specs, convert first: `python -c "import yaml,json,sys; json.dump(yaml.safe_load(open('spec.yaml')), open('spec.json','w'))"`.
 - **HHEM model load time** - the Vectara hallucination model is loaded at startup and adds a few seconds to cold start.

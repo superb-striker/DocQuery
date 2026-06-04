@@ -1,25 +1,34 @@
-import json, os, httpx
-from fastapi import FastAPI, HTTPException, UploadFile, File
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+import json
+import os
+import time
+from typing import Literal
+
+import httpx
+from agent import resolve_follow_up, run_confidence_retry, select_specifications
+from confidence import score_confidence
 from dotenv import load_dotenv
-from langfuse import observe, get_client
-from ingest import fetch_specification, extract_chunks
-from vectorStore import client, store_chunks, retrieve_hybrid
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from ingest import extract_chunks, fetch_specification
+from langfuse import get_client, observe
 from llm import (
+    LLMProviderError,
     build_contextualization_prompt,
     build_prompt,
     build_query_decomposition_prompt,
     build_retrieval_rewrite_prompt,
     build_specification_routing_prompt,
+    get_llm_metrics,
+    get_provider_config,
+    provider_catalog,
     query_llm,
+    reset_llm_metrics,
 )
-from confidence import score_confidence
 from loggerConfig import get_logger
-from agent import resolve_follow_up, run_confidence_retry, select_specifications
+from pydantic import BaseModel, Field
+from vectorStore import client, retrieve_hybrid, store_chunks
 
 load_dotenv()
-HF_TOKEN = os.getenv("HF_TOKEN", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 langfuse = get_client()
 
@@ -46,6 +55,7 @@ class QueryRequest(BaseModel):
     question: str
     specification_name: str
     history: list[ConversationTurn] = Field(default_factory=list)
+    llm_provider: Literal["groq", "gemini", "huggingface"] = "groq"
 
 
 # Observed helpers
@@ -99,19 +109,21 @@ def retrieve_from_specifications(question: str, selected_specs: list[str]):
     return interleaved
 
 @observe(name="llm-generate")
-async def run_generation(prompt: str):
+async def run_generation(prompt: str, provider: str):
     # Log the full prompt so you can debug what the LLM actually received
     langfuse.update_current_span(input={"prompt": prompt})
-    answer = await query_llm(prompt)
+    answer = await query_llm(prompt, provider)
     langfuse.update_current_span(output={"answer": answer})
     return answer
 
 
 @observe(name="rewrite-retrieval-query")
-async def run_query_rewrite(question: str, answer: str, chunks: list[dict]):
+async def run_query_rewrite(
+    question: str, answer: str, chunks: list[dict], provider: str
+):
     prompt = build_retrieval_rewrite_prompt(question, answer, chunks)
     langfuse.update_current_span(input={"question": question})
-    rewritten = (await query_llm(prompt)).strip().strip('"\'')
+    rewritten = (await query_llm(prompt, provider)).strip().strip('"\'')
     # Retrieval needs a compact query, not model commentary or multiple options.
     rewritten = " ".join(rewritten.splitlines()[:1])[:500]
     langfuse.update_current_span(output={"rewritten_query": rewritten})
@@ -119,10 +131,10 @@ async def run_query_rewrite(question: str, answer: str, chunks: list[dict]):
 
 
 @observe(name="decompose-query")
-async def run_query_decomposition(question: str) -> list[str]:
+async def run_query_decomposition(question: str, provider: str) -> list[str]:
     prompt = build_query_decomposition_prompt(question)
     langfuse.update_current_span(input={"question": question})
-    raw_plan = (await query_llm(prompt)).strip()
+    raw_plan = (await query_llm(prompt, provider)).strip()
     try:
         start = raw_plan.index("[")
         end = raw_plan.rindex("]") + 1
@@ -135,12 +147,14 @@ async def run_query_decomposition(question: str) -> list[str]:
 
 
 @observe(name="contextualize-follow-up")
-async def run_query_contextualization(question: str, history: list[dict]) -> str:
+async def run_query_contextualization(
+    question: str, history: list[dict], provider: str
+) -> str:
     prompt = build_contextualization_prompt(question, history)
     langfuse.update_current_span(
         input={"question": question, "history_length": len(history)}
     )
-    resolved = (await query_llm(prompt)).strip()
+    resolved = (await query_llm(prompt, provider)).strip()
     langfuse.update_current_span(output={"resolved_question": resolved})
     return resolved
 
@@ -149,12 +163,13 @@ async def run_query_contextualization(question: str, history: list[dict]) -> str
 async def run_specification_routing(
     question: str,
     available_specs: list[str],
+    provider: str,
 ) -> list[str]:
     prompt = build_specification_routing_prompt(question, available_specs)
     langfuse.update_current_span(
         input={"question": question, "available_specs": available_specs}
     )
-    raw_selection = (await query_llm(prompt)).strip()
+    raw_selection = (await query_llm(prompt, provider)).strip()
     try:
         start = raw_selection.index("[")
         end = raw_selection.rindex("]") + 1
@@ -166,8 +181,8 @@ async def run_specification_routing(
     return selection
 
 
-async def generate_answer(question: str, chunks: list[dict]):
-    return await run_generation(build_prompt(question, chunks))
+async def generate_answer(question: str, chunks: list[dict], provider: str):
+    return await run_generation(build_prompt(question, chunks), provider)
 
 # Endpoints
 
@@ -253,16 +268,39 @@ async def query(req: QueryRequest):
       6. If confidence is low, rewrite retrieval and make one corrective attempt.
       7. Return the attempt with the stronger grounding score.
     """
-    logger.info(f"Query received for specification: {req.specification_name}")
+    started_at = time.perf_counter()
+    provider = req.llm_provider
+    provider_config = get_provider_config(provider)
+    reset_llm_metrics()
+    logger.info(
+        f"Query received for specification: {req.specification_name} "
+        f"using {provider_config['label']}"
+    )
     # Log the user's question as the trace input — visible at the top level in Langfuse
     langfuse.set_current_trace_io(
         input={
             "question": req.question,
             "specification": req.specification_name,
             "history_length": len(req.history),
+            "llm_provider": provider,
         }
     )
     try:
+        async def contextualize(question: str, history: list[dict]):
+            return await run_query_contextualization(question, history, provider)
+
+        async def route(question: str, specs: list[str]):
+            return await run_specification_routing(question, specs, provider)
+
+        async def generate(question: str, chunks: list[dict]):
+            return await generate_answer(question, chunks, provider)
+
+        async def rewrite(question: str, answer: str, chunks: list[dict]):
+            return await run_query_rewrite(question, answer, chunks, provider)
+
+        async def decompose(question: str):
+            return await run_query_decomposition(question, provider)
+
         history = [
             {"question": turn.question, "answer": turn.answer}
             for turn in req.history
@@ -270,14 +308,14 @@ async def query(req: QueryRequest):
         resolved_question = await resolve_follow_up(
             req.question,
             history,
-            run_query_contextualization,
+            contextualize,
         )
         available_specs = specification_names()
         if req.specification_name == ALL_SPECIFICATIONS:
             selected_specs = await select_specifications(
                 resolved_question,
                 available_specs,
-                run_specification_routing,
+                route,
             )
         else:
             selected_specs = [req.specification_name]
@@ -289,10 +327,11 @@ async def query(req: QueryRequest):
             question=resolved_question,
             specification_name=req.specification_name,
             retrieve=retrieve_selected,
-            generate=generate_answer,
+            generate=generate,
             score=score_confidence,
-            rewrite=run_query_rewrite,
-            decompose=run_query_decomposition,
+            rewrite=rewrite,
+            decompose=decompose,
+            max_chunks=provider_config["max_chunks"],
         )
         if not result.chunks:
             logger.warning("No chunks found for query.")
@@ -319,12 +358,22 @@ async def query(req: QueryRequest):
             }
             for c in result.chunks
         ]
+        elapsed_ms = round((time.perf_counter() - started_at) * 1000)
+        llm = {
+            "provider": provider,
+            "label": provider_config["label"],
+            "model": provider_config["model"],
+            "max_chunks": provider_config["max_chunks"],
+            **get_llm_metrics(),
+        }
         # Log the answer + confidence as the trace output
         langfuse.set_current_trace_io(
             output={
                 "answer": result.answer,
                 "confidence": result.confidence,
                 "sources": sources,
+                "llm": llm,
+                "latency_ms": elapsed_ms,
                 "agent": {
                     "attempts": result.attempts,
                     "retried": result.retried,
@@ -341,6 +390,8 @@ async def query(req: QueryRequest):
             "answer": result.answer,
             "confidence": result.confidence,
             "sources": sources,
+            "llm": llm,
+            "latency_ms": elapsed_ms,
             "agent": {
                 "attempts": result.attempts,
                 "retried": result.retried,
@@ -352,12 +403,21 @@ async def query(req: QueryRequest):
         }
     except HTTPException:
         raise
+    except LLMProviderError as e:
+        logger.error(f"Query provider failed: {e}")
+        langfuse.update_current_span(output={"error": str(e), "provider": provider})
+        raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
         logger.error(f"Query failed: {e}")
         langfuse.update_current_span(output={"error": str(e)})
         raise HTTPException(status_code=500, detail="Internal server error")
 
 # List Specifications
+@app.get("/llm/providers")
+def list_llm_providers():
+    return {"providers": provider_catalog()}
+
+
 @app.get("/specifications")
 def list_specs():
     try:
