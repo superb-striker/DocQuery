@@ -43,6 +43,7 @@ The standard advice for understanding an API is "just paste the spec into ChatGP
 - **Confidence-gated self-correction** - when an answer scores below the grounding threshold, the query agent rewrites the retrieval query and makes one bounded retry, keeping the better-grounded answer.
 - **Multi-step query planning** - compound questions are decomposed into at most three focused retrieval queries; endpoint evidence is deduplicated and combined before answer generation.
 - **Conversational follow-ups** - the browser sends the last three successful exchanges to resolve references such as "that endpoint" into standalone retrieval questions; history is not stored server-side and resets when switching specifications.
+- **Cross-spec queries** - an "All specifications" mode routes questions to at most three relevant API collections, combines their evidence, and labels every cited endpoint with its source specification.
 
 ---
 

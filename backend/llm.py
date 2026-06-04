@@ -20,7 +20,12 @@ def build_prompt(query: str, chunks: List[Dict]) -> str:
     if not chunks:
         logger.warning("No chunks provided to build_prompt.")
     try:
-        context = "\n\n---\n\n".join([c["text"] for c in chunks])
+        context = "\n\n---\n\n".join(
+            f"[Specification: "
+            f"{c.get('metadata', {}).get('collection_name') or c.get('metadata', {}).get('specification_name', 'Unknown')}]\n"
+            f"{c['text']}"
+            for c in chunks
+        )
     except KeyError as e:
         logger.error(f"Chunk missing 'text' field: {e}")
         context = ""
@@ -113,6 +118,27 @@ LATEST QUESTION:
 {question}
 
 STANDALONE QUESTION:"""
+
+
+def build_specification_routing_prompt(
+    question: str,
+    specification_names: List[str],
+) -> str:
+    """Build a prompt that selects relevant API specifications."""
+    choices = "\n".join(f"- {name}" for name in specification_names)
+    return f"""Select the API specifications relevant to the user's question.
+
+Return only a valid JSON array containing one to three exact names from the
+available list. Select multiple specifications when the user asks for a
+comparison or a workflow spanning APIs. Do not answer the question.
+
+AVAILABLE SPECIFICATIONS:
+{choices}
+
+USER QUESTION:
+{question}
+
+JSON SPECIFICATION SELECTION:"""
 
 # LLM Query
 async def query_llm(prompt: str) -> str:

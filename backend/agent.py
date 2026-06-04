@@ -9,6 +9,7 @@ Score = Callable[[str, str, Chunks], int]
 Rewrite = Callable[[str, str, Chunks], Awaitable[str]]
 Decompose = Callable[[str], Awaitable[List[str]]]
 Contextualize = Callable[[str, List[Dict]], Awaitable[str]]
+RouteSpecifications = Callable[[str, List[str]], Awaitable[List[str]]]
 
 
 @dataclass
@@ -59,6 +60,36 @@ async def resolve_follow_up(
     return resolved or question
 
 
+async def select_specifications(
+    question: str,
+    available: List[str],
+    route: RouteSpecifications,
+    max_specs: int = 3,
+) -> List[str]:
+    """Select a bounded set of collections for a cross-spec query."""
+    available = list(dict.fromkeys(name for name in available if name))
+    limit = max(1, max_specs)
+    if len(available) <= limit:
+        return available
+
+    try:
+        proposed = await route(question, available)
+    except Exception:
+        return available[:limit]
+
+    by_name = {name.casefold(): name for name in available}
+    selected = []
+    for name in proposed if isinstance(proposed, list) else []:
+        if not isinstance(name, str):
+            continue
+        canonical = by_name.get(name.strip().casefold())
+        if canonical and canonical not in selected:
+            selected.append(canonical)
+        if len(selected) >= limit:
+            break
+    return selected or available[:limit]
+
+
 async def run_confidence_retry(
     question: str,
     specification_name: str,
@@ -69,10 +100,13 @@ async def run_confidence_retry(
     confidence_threshold: int = 70,
     decompose: Optional[Decompose] = None,
     max_subqueries: int = 3,
+    max_chunks: int = 15,
 ) -> AgentResult:
     """Run the normal RAG path and make one corrective attempt when needed."""
     subqueries = await _build_query_plan(question, decompose, max_subqueries)
-    chunks = _retrieve_and_merge(subqueries, specification_name, retrieve)
+    chunks = _retrieve_and_merge(
+        subqueries, specification_name, retrieve, max_chunks=max_chunks
+    )
     if not chunks:
         return AgentResult(
             "", [], 0, attempts=1, retried=False, selected_attempt=1,
@@ -175,22 +209,30 @@ def _retrieve_and_merge(
     queries: List[str],
     specification_name: str,
     retrieve: Retrieve,
+    max_chunks: int,
 ) -> Chunks:
     merged = []
     seen = set()
+    per_query_limit = max(1, max_chunks // max(1, len(queries)))
     for query in queries:
+        added_for_query = 0
         for chunk in retrieve(query, specification_name) or []:
             metadata = chunk.get("metadata", {})
             key = (
+                metadata.get("collection_name")
+                or metadata.get("specification_name", ""),
                 metadata.get("method", ""),
                 metadata.get("path", ""),
             )
             if not any(key):
-                key = ("text", chunk.get("text", ""))
+                key = ("text", "", chunk.get("text", ""))
             if key in seen:
                 continue
             seen.add(key)
             merged.append(chunk)
+            added_for_query += 1
+            if added_for_query >= per_query_limit or len(merged) >= max_chunks:
+                break
     return merged
 
 

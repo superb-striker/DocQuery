@@ -12,9 +12,10 @@ const METHOD_COLORS = {
  * @prop {string}      method  - HTTP method string e.g. "GET".
  * @prop {string}      path    - Endpoint path e.g. "/pets/{id}".
  * @prop {string|null} summary - Optional short description from the spec.
+ * @prop {string|null} specification - Specification that supplied the endpoint.
  * @prop {boolean}     dark    - Whether dark mode is active.
  */
-export function SourceChip({ method, path, summary, dark }) {
+export function SourceChip({ method, path, summary, specification, dark }) {
   const color = METHOD_COLORS[method] || (dark ? "#94a3b8" : "#64748b");
   return (
     <div style={{
@@ -31,6 +32,15 @@ export function SourceChip({ method, path, summary, dark }) {
         {method}
       </span>
       <div>
+        {specification && (
+          <div style={{
+            fontSize: 9, color: dark ? "#64748b" : "#94a3b8",
+            fontFamily: "'DM Mono', monospace", marginBottom: 2,
+            textTransform: "uppercase", letterSpacing: "0.08em",
+          }}>
+            {specification}
+          </div>
+        )}
         <div style={{
           fontFamily: "'DM Mono', monospace", fontSize: 12,
           color: dark ? "#e2e8f0" : "#1e293b",

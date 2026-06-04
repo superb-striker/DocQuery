@@ -1,6 +1,10 @@
 import unittest
 
-from backend.agent import resolve_follow_up, run_confidence_retry
+from backend.agent import (
+    resolve_follow_up,
+    run_confidence_retry,
+    select_specifications,
+)
 
 
 def chunk(endpoint: str):
@@ -206,6 +210,63 @@ class FollowUpResolutionTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(resolved, "What does that return?")
+
+
+class SpecificationRoutingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_small_spec_set_uses_all_without_router_call(self):
+        async def route(question, available):
+            self.fail("router should not run for three or fewer specs")
+
+        selected = await select_specifications(
+            "compare authentication", ["stripe", "github"], route
+        )
+
+        self.assertEqual(selected, ["stripe", "github"])
+
+    async def test_router_selection_is_validated_and_bounded(self):
+        async def route(question, available):
+            return ["GITHUB", "missing", "stripe", "github", "phantom"]
+
+        selected = await select_specifications(
+            "compare APIs",
+            ["stripe", "github", "phantom", "petstore"],
+            route,
+            max_specs=3,
+        )
+
+        self.assertEqual(selected, ["github", "stripe", "phantom"])
+
+    async def test_router_failure_has_bounded_fallback(self):
+        async def route(question, available):
+            raise RuntimeError("provider unavailable")
+
+        selected = await select_specifications(
+            "question", ["one", "two", "three", "four"], route
+        )
+
+        self.assertEqual(selected, ["one", "two", "three"])
+
+    async def test_same_endpoint_from_different_specs_is_not_deduplicated(self):
+        def retrieve(query, specification_name):
+            first = chunk("GET /health")
+            first["metadata"]["collection_name"] = "service_a"
+            second = chunk("GET /health")
+            second["metadata"]["collection_name"] = "service_b"
+            return [first, second]
+
+        async def generate(question, chunks):
+            return "comparison"
+
+        async def rewrite(question, answer, chunks):
+            return question
+
+        result = await run_confidence_retry(
+            "compare health endpoints", "__all__", retrieve, generate,
+            lambda question, answer, chunks: 90,
+            rewrite,
+        )
+
+        self.assertEqual(len(result.chunks), 2)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,8 @@ import { useRef, useState } from "react";
 import { Spinner } from "./ui/Spinner";
 import { primaryBtnStyle } from "../theme";
 
+const ALL_SPECIFICATIONS = "__all__";
+
 /**
  * Panel containing the question textarea, mic button, and submit button.
  * Also renders the specification selector pills above the textarea.
@@ -30,6 +32,9 @@ export function QueryPanel({
   const isRecording = voiceState === "recording";
   const isTranscribing = voiceState === "transcribing";
   const voiceBusy = isRecording || isTranscribing;
+  const specificationOptions = loadedSpecs.length > 1
+    ? [ALL_SPECIFICATIONS, ...loadedSpecs]
+    : loadedSpecs;
 
   const handleMic = async () => {
     // ── Stop recording ──────────────────────────────────────────────────────
@@ -118,7 +123,7 @@ export function QueryPanel({
           }}>
             active:
           </span>
-          {loadedSpecs.map(name => (
+          {specificationOptions.map(name => (
             <button
               key={name}
               onClick={() => onSelectSpec(name)}
@@ -134,7 +139,7 @@ export function QueryPanel({
                 opacity: querying ? 0.55 : 1,
               }}
             >
-              {name}
+              {name === ALL_SPECIFICATIONS ? "All specifications" : name}
             </button>
           ))}
         </div>
@@ -162,7 +167,7 @@ export function QueryPanel({
             isTranscribing
               ? "Transcribing…"
               : activeSpec
-                ? `Ask about ${activeSpec}…`
+                ? `Ask about ${activeSpec === ALL_SPECIFICATIONS ? "all specifications" : activeSpec}…`
                 : "Load a specification first, then ask a question…"
           }
           disabled={!activeSpec || voiceBusy}

@@ -79,6 +79,7 @@ export function ResultPanel({ result, dark, t, animate }) {
                   method={method}
                   path={rest.join(" ")}
                   summary={s.summary}
+                  specification={s.specification}
                   dark={dark}
                 />
               );

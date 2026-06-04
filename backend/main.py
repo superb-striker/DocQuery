@@ -11,11 +11,12 @@ from llm import (
     build_prompt,
     build_query_decomposition_prompt,
     build_retrieval_rewrite_prompt,
+    build_specification_routing_prompt,
     query_llm,
 )
 from confidence import score_confidence
 from loggerConfig import get_logger
-from agent import resolve_follow_up, run_confidence_retry
+from agent import resolve_follow_up, run_confidence_retry, select_specifications
 
 load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN", "")
@@ -23,6 +24,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 langfuse = get_client()
 
 logger = get_logger("main")
+ALL_SPECIFICATIONS = "__all__"
 
 app = FastAPI(title="DocQuery")
 
@@ -67,6 +69,34 @@ def run_retrieval(question: str, specification_name: str):
         }
     )
     return chunks
+
+
+def specification_names() -> list[str]:
+    return [collection.name for collection in client.list_collections()]
+
+
+def retrieve_from_specifications(question: str, selected_specs: list[str]):
+    """Retrieve from each selected spec and interleave their ranked results."""
+    results_by_spec = []
+    for specification_name in selected_specs:
+        tagged = []
+        for chunk in run_retrieval(question, specification_name):
+            tagged.append({
+                **chunk,
+                "metadata": {
+                    **chunk.get("metadata", {}),
+                    "collection_name": specification_name,
+                },
+            })
+        results_by_spec.append(tagged)
+
+    interleaved = []
+    max_results = max((len(items) for items in results_by_spec), default=0)
+    for index in range(max_results):
+        for items in results_by_spec:
+            if index < len(items):
+                interleaved.append(items[index])
+    return interleaved
 
 @observe(name="llm-generate")
 async def run_generation(prompt: str):
@@ -113,6 +143,27 @@ async def run_query_contextualization(question: str, history: list[dict]) -> str
     resolved = (await query_llm(prompt)).strip()
     langfuse.update_current_span(output={"resolved_question": resolved})
     return resolved
+
+
+@observe(name="route-specifications")
+async def run_specification_routing(
+    question: str,
+    available_specs: list[str],
+) -> list[str]:
+    prompt = build_specification_routing_prompt(question, available_specs)
+    langfuse.update_current_span(
+        input={"question": question, "available_specs": available_specs}
+    )
+    raw_selection = (await query_llm(prompt)).strip()
+    try:
+        start = raw_selection.index("[")
+        end = raw_selection.rindex("]") + 1
+        parsed = json.loads(raw_selection[start:end])
+        selection = parsed if isinstance(parsed, list) else []
+    except (ValueError, json.JSONDecodeError):
+        selection = []
+    langfuse.update_current_span(output={"selected_specs": selection})
+    return selection
 
 
 async def generate_answer(question: str, chunks: list[dict]):
@@ -221,10 +272,23 @@ async def query(req: QueryRequest):
             history,
             run_query_contextualization,
         )
+        available_specs = specification_names()
+        if req.specification_name == ALL_SPECIFICATIONS:
+            selected_specs = await select_specifications(
+                resolved_question,
+                available_specs,
+                run_specification_routing,
+            )
+        else:
+            selected_specs = [req.specification_name]
+
+        def retrieve_selected(question: str, _specification_name: str):
+            return retrieve_from_specifications(question, selected_specs)
+
         result = await run_confidence_retry(
             question=resolved_question,
             specification_name=req.specification_name,
-            retrieve=run_retrieval,
+            retrieve=retrieve_selected,
             generate=generate_answer,
             score=score_confidence,
             rewrite=run_query_rewrite,
@@ -247,7 +311,11 @@ async def query(req: QueryRequest):
         sources = [
             {
                 "endpoint": f"{c['metadata']['method']} {c['metadata']['path']}",
-                "summary": c['metadata']['summary']
+                "summary": c['metadata']['summary'],
+                "specification": (
+                    c['metadata'].get("collection_name")
+                    or c['metadata'].get("specification_name", "Unknown")
+                ),
             }
             for c in result.chunks
         ]
@@ -263,6 +331,7 @@ async def query(req: QueryRequest):
                     "selected_attempt": result.selected_attempt,
                     "subqueries": result.subqueries,
                     "resolved_question": resolved_question,
+                    "selected_specs": selected_specs,
                 },
             }
         )
@@ -278,6 +347,7 @@ async def query(req: QueryRequest):
                 "selected_attempt": result.selected_attempt,
                 "subqueries": result.subqueries,
                 "resolved_question": resolved_question,
+                "selected_specs": selected_specs,
             },
         }
     except HTTPException:
@@ -291,10 +361,9 @@ async def query(req: QueryRequest):
 @app.get("/specifications")
 def list_specs():
     try:
-        collections = client.list_collections()
-        specification_names = [c.name for c in collections]
-        logger.info(f"Listing {len(specification_names)} specifications.")
-        return {"specifications": specification_names}
+        names = specification_names()
+        logger.info(f"Listing {len(names)} specifications.")
+        return {"specifications": names}
     except Exception as e:
         logger.error(f"Failed to list specifications: {e}")
         raise HTTPException(status_code=500, detail="Failed to list specifications")
