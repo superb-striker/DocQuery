@@ -4,6 +4,7 @@ from sentence_transformers import util
 from loggerConfig import get_logger
 from sentence_transformers import CrossEncoder
 from vectorStore import embedder
+from workflow_confidence import score_workflow_confidence
 
 logger = get_logger("confidence")
 
@@ -80,7 +81,7 @@ def llm_judge_score(answer: str, chunks: List[Dict]) -> float | None:
     the answer against retrieved chunks. Returns a 0–1 float (1 = grounded,
     0 = hallucinated). Returns None on error so caller falls back to cosine.
     """
-    context = "\n\n---\n\n".join(c["text"] for c in chunks)
+    context = _bounded_hhem_context(answer, chunks)
     try:
         # HHEM scores the prose claims
         answer_for_hhem = re.sub(r"```[\s\S]*?```", "", answer).strip()
@@ -95,6 +96,64 @@ def llm_judge_score(answer: str, chunks: List[Dict]) -> float | None:
     except Exception as e:
         logger.error(f"HHEM judge failed: {e}")
         return None
+
+
+def _bounded_hhem_context(
+    answer: str,
+    chunks: List[Dict],
+    max_chars: int = 3000,
+) -> str:
+    """Keep endpoint headers and answer-relevant field excerpts within HHEM input."""
+    if not chunks:
+        return ""
+    identifiers = set(re.findall(r"`([A-Za-z_][A-Za-z0-9_]*)`", answer))
+    cited_endpoints = {
+        (method.upper(), path.rstrip(".,;").rstrip("/") or "/")
+        for method, path in re.findall(
+            r"\*\*Endpoint:\*\*\s*`?\s*([A-Za-z]+)\s+([^`\s*]+)", answer
+        )
+    }
+
+    def citation_priority(chunk: Dict) -> int:
+        metadata = chunk.get("metadata", {})
+        path = str(metadata.get("path", "")).rstrip("/") or "/"
+        endpoint = (str(metadata.get("method", "")).upper(), path)
+        return 0 if endpoint in cited_endpoints else 1
+
+    chunks = sorted(chunks, key=citation_priority)
+    per_chunk = max(600, max_chars // len(chunks))
+    sections = []
+    for chunk in chunks:
+        text = chunk.get("text", "")
+        prefix_size = max(400, per_chunk // 2)
+        parts = [text[:prefix_size].strip()]
+        remaining = per_chunk - len(parts[0])
+        for identifier in identifiers:
+            match = re.search(rf"\b{re.escape(identifier)}\b", text, re.IGNORECASE)
+            if not match or remaining <= 80:
+                continue
+            excerpt_size = min(350, remaining)
+            start = max(0, match.start() - excerpt_size // 3)
+            parts.append(text[start:start + excerpt_size].strip())
+            remaining -= excerpt_size
+        sections.append("\n...\n".join(part for part in parts if part)[:per_chunk])
+    return "\n\n---\n\n".join(sections)[:max_chars]
+
+
+def _grounding_confidence(answer: str, chunks: List[Dict]) -> int:
+    cosine = _cosine_score(answer, chunks)
+    judge = llm_judge_score(answer, chunks)
+    if judge is None:
+        confidence = round(cosine * 100)
+        logger.info(f"Confidence (cosine-only fallback): {confidence}/100")
+    else:
+        combined = 0.7 * judge + 0.3 * cosine
+        confidence = round(combined * 100)
+        logger.info(
+            f"Confidence (judge={judge:.2f}, cosine={cosine:.2f}, "
+            f"combined={combined:.2f}): {confidence}/100"
+        )
+    return confidence
 
 # Public scorer
 def score_confidence(query: str, answer: str, chunks: List[Dict]) -> int:
@@ -114,17 +173,16 @@ def score_confidence(query: str, answer: str, chunks: List[Dict]) -> int:
     if not chunks:
         logger.warning("No chunks provided for confidence scoring.")
         return 0
-    cosine = _cosine_score(answer, chunks)
-    judge = llm_judge_score(answer, chunks)
-    if judge is None:
-        # Judge call failed - trust cosine only
-        confidence = round(cosine * 100)
-        logger.info(f"Confidence (cosine-only fallback): {confidence}/100")
-    else:
-        combined = 0.7 * judge + 0.3 * cosine
-        confidence = round(combined * 100)
+    workflow = score_workflow_confidence(answer, chunks, _grounding_confidence)
+    if workflow is not None:
         logger.info(
-            f"Confidence (judge={judge:.2f}, cosine={cosine:.2f}, "
-            f"combined={combined:.2f}): {confidence}/100"
+            "Workflow confidence "
+            f"(steps={workflow.step_scores}, "
+            f"coverage={workflow.answered_steps}/{workflow.expected_steps}, "
+            f"combined={workflow.score}/100)"
         )
-    return confidence
+        return workflow.score
+    return _grounding_confidence(answer, chunks)
+
+
+score_confidence.includes_workflow_completeness = True

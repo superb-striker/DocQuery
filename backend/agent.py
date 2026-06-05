@@ -125,8 +125,8 @@ async def run_confidence_retry(
         retrieval_query=question,
         answer=answer,
         chunks=chunks,
-        confidence=_workflow_adjusted_score(
-            score(question, answer, chunks), answer, subqueries
+        confidence=_score_with_workflow_completeness(
+            score, question, answer, chunks, subqueries
         ),
     )
     effective_threshold = (
@@ -154,8 +154,8 @@ async def run_confidence_retry(
                 retrieval_query=question,
                 answer=retry_answer,
                 chunks=chunks,
-                confidence=_workflow_adjusted_score(
-                    score(question, retry_answer, chunks), retry_answer, subqueries
+                confidence=_score_with_workflow_completeness(
+                    score, question, retry_answer, chunks, subqueries
                 ),
             )
         except Exception:
@@ -206,8 +206,8 @@ async def run_confidence_retry(
             retrieval_query=refined_query,
             answer=retry_answer,
             chunks=retry_chunks,
-            confidence=_workflow_adjusted_score(
-                score(question, retry_answer, retry_chunks), retry_answer, subqueries
+            confidence=_score_with_workflow_completeness(
+                score, question, retry_answer, retry_chunks, subqueries
             ),
         )
     except Exception:
@@ -362,6 +362,19 @@ def _workflow_adjusted_score(
     }
     completeness = len(answered) / expected
     return round(grounding_score * completeness)
+
+
+def _score_with_workflow_completeness(
+    score: Score,
+    question: str,
+    answer: str,
+    chunks: Chunks,
+    workflow_steps: list[str],
+) -> int:
+    confidence = score(question, answer, chunks)
+    if getattr(score, "includes_workflow_completeness", False):
+        return confidence
+    return _workflow_adjusted_score(confidence, answer, workflow_steps)
 
 
 def order_chunks_by_answer_citations(answer: str, chunks: Chunks) -> Chunks:

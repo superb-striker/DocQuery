@@ -294,6 +294,33 @@ class ConfidenceRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.attempts, 1)
         self.assertEqual(generate_calls, 1)
 
+    async def test_workflow_aware_scorer_is_not_penalized_twice(self):
+        def retrieve(query, specification_name):
+            return [chunk(f"POST /{query}")]
+
+        async def generate(question, chunks):
+            return "**Step 1: One**\n**Step 2: Two**"
+
+        def score(question, answer, chunks):
+            return 65
+
+        score.includes_workflow_completeness = True
+
+        async def rewrite(question, answer, chunks):
+            self.fail("the already-combined score is above the workflow threshold")
+
+        async def decompose(question):
+            return ["one", "two", "three"]
+
+        result = await run_confidence_retry(
+            "three steps", "spec", retrieve, generate, score, rewrite,
+            decompose=decompose,
+            workflow_confidence_threshold=60,
+        )
+
+        self.assertEqual(result.confidence, 65)
+        self.assertEqual(result.attempts, 1)
+
 
 class CitationOrderingTests(unittest.TestCase):
     def test_answer_endpoints_come_before_supporting_evidence(self):

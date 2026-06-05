@@ -42,6 +42,7 @@ The standard advice for understanding an API is "just paste the spec into ChatGP
 - **Pipeline observability** - every query is traced end-to-end with Langfuse; retrieval span logs which endpoints were retrieved, the LLM generation span logs the full prompt and answer, and confidence scores are tracked as metrics across all queries.
 - **Confidence-gated self-correction** - when an answer scores below the grounding threshold, the query agent rewrites the retrieval query and makes one bounded retry, keeping the better-grounded answer.
 - **Workflow-aware answers** - compound questions are decomposed into at most three focused operations; evidence is labelled per operation, exact action matches are prioritized, and the answer must cover every step in order. Missing steps reduce confidence and trigger correction.
+- **Workflow-aware confidence** - each answer step is scored only against the evidence retrieved for its corresponding operation; missing steps or missing labelled evidence contribute zero instead of letting unrelated chunks inflate the score.
 - **Conversational follow-ups** - the browser sends the last three successful exchanges to resolve references such as "that endpoint" into standalone retrieval questions; history is not stored server-side and resets when switching specifications.
 - **Cross-spec queries** - an "All specifications" mode routes questions to at most three relevant API collections, combines their evidence, and labels every cited endpoint with its source specification.
 
@@ -63,7 +64,7 @@ The standard advice for understanding an API is "just paste the spec into ChatGP
 
 **BM25 + RRF over HyDE** - HyDE generates a hypothetical answer to use as a proxy query, which helps when queries are vague and documents are unstructured prose. API documentation is the opposite: queries are specific ("how do I update a customer") and documents are structured chunks with exact method+path identifiers. In that setting HyDE introduces hallucination risk at the retrieval stage - a fabricated answer may embed closer to the wrong endpoint than the right one. BM25 handles this domain more reliably: "update a customer" is a near-exact keyword match to `Update a customer — PATCH /v1/customers/{customer}`, whereas a dense-only retriever can rank it far lower because the embedding model doesn't bridge synonyms like "modify" → "update" at query time. Running both in parallel and fusing with RRF captures keyword precision and semantic recall without the hallucination risk HyDE introduces at retrieval.
 
-**HHEM + cosine confidence scoring** - Vectara's Hallucination Evaluation Model (HHEM) scores factual consistency between the answer prose and retrieved chunks. A separate JSON field grounding check verifies that any code examples in the answer use only field names present in the spec. The two signals are blended (70/30) and combined with cosine similarity as a fallback, giving a 0–100 score that acts as a metric for detecting hallucinations.
+**HHEM + cosine confidence scoring** - Vectara's Hallucination Evaluation Model (HHEM) scores factual consistency between the answer prose and retrieved chunks. For workflows, each `Step N` is evaluated against only its labelled retrieval group using a bounded, answer-relevant context, and the step scores are averaged with missing steps scored as zero. A separate JSON field grounding check verifies that code examples use only fields present in the spec. The signals are blended with cosine similarity as a fallback, giving a 0–100 grounding and completeness score.
 
 **Per-spec ChromaDB collections + BM25 indexes** - Each ingested API gets its own ChromaDB collection and a paired `.pkl` BM25 index on disk. This allows simultaneous multi-spec support with zero cross-contamination and O(1) collection switching.
 
@@ -246,6 +247,7 @@ DocQuery/
 |   ├── vectorStore.py 
 |   ├── llm.py            
 |   ├── confidence.py     
+|   ├── workflow_confidence.py
 |   ├── loggerConfig.py       
 |   ├── chromaDB/       
 |   ├── bm25_indexes/ 
