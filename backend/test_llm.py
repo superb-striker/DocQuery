@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 from unittest.mock import patch
@@ -23,6 +24,9 @@ class LLMProviderTests(unittest.TestCase):
         self.assertEqual(url, "https://api.groq.com/openai/v1/chat/completions")
         self.assertEqual(headers["Authorization"], "Bearer test-key")
         self.assertEqual(payload["model"], "openai/gpt-oss-120b")
+        self.assertEqual(payload["reasoning_effort"], "low")
+        self.assertEqual(payload["max_completion_tokens"], 900)
+        self.assertNotIn("max_tokens", payload)
         self.assertLessEqual(len(payload["stop"]), 4)
 
     def test_gemini_request_uses_openai_compatible_endpoint(self):
@@ -71,6 +75,48 @@ class LLMProviderTests(unittest.TestCase):
         self.assertIn("Repeat through **Step 3**", prompt)
         self.assertIn("3. POST create subscription", prompt)
         self.assertIn("[Evidence retrieved for: POST create customer]", prompt)
+
+    def test_evidence_budget_compacts_large_schemas_without_dropping_steps(self):
+        steps = ["POST create customer", "POST create subscription"]
+        body = {
+            "required_fields": [],
+            "all_fields": {
+                "customer": {
+                    "type": "string",
+                    "description": "The customer identifier used for the subscription.",
+                },
+                "items": {
+                    "type": "array",
+                    "description": "Prices and quantities for the subscription.",
+                },
+                "unrelated_configuration": {
+                    "type": "object",
+                    "description": "x" * 6000,
+                },
+            },
+        }
+        chunks = []
+        for index, step in enumerate(steps):
+            chunks.append({
+                "text": (
+                    f"Operation: POST /step-{index + 1}\nSummary: {step}\n"
+                    f"Request Body Fields: {json.dumps(body)}\nResponses: 200"
+                ),
+                "metadata": {
+                    "retrieval_query": step,
+                    "workflow_steps": steps,
+                },
+            })
+
+        prompt = build_prompt(
+            "create a customer and subscription", chunks, max_evidence_chars=2400
+        )
+
+        self.assertIn("POST /step-1", prompt)
+        self.assertIn("POST /step-2", prompt)
+        self.assertIn("- customer (string, optional)", prompt)
+        self.assertIn("- items (array, optional)", prompt)
+        self.assertLess(len(prompt), 6000)
 
 
 if __name__ == "__main__":

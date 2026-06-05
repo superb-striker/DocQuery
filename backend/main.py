@@ -182,7 +182,13 @@ async def run_specification_routing(
 
 
 async def generate_answer(question: str, chunks: list[dict], provider: str):
-    return await run_generation(build_prompt(question, chunks), provider)
+    config = get_provider_config(provider)
+    prompt = build_prompt(
+        question,
+        chunks,
+        max_evidence_chars=config["max_evidence_chars"],
+    )
+    return await run_generation(prompt, provider)
 
 # Endpoints
 
@@ -332,6 +338,7 @@ async def query(req: QueryRequest):
             rewrite=rewrite,
             decompose=decompose,
             max_chunks=provider_config["max_chunks"],
+            workflow_confidence_threshold=60 if provider == "groq" else 70,
         )
         if not result.chunks:
             logger.warning("No chunks found for query.")
@@ -364,6 +371,7 @@ async def query(req: QueryRequest):
             "label": provider_config["label"],
             "model": provider_config["model"],
             "max_chunks": provider_config["max_chunks"],
+            "max_evidence_chars": provider_config["max_evidence_chars"],
             **get_llm_metrics(),
         }
         # Log the answer + confidence as the trace output

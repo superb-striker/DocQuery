@@ -224,6 +224,75 @@ class ConfidenceRetryTests(unittest.IsolatedAsyncioTestCase):
             90,
         )
 
+    async def test_workflow_retry_reuses_balanced_evidence(self):
+        retrieve_calls = []
+        generation_chunks = []
+
+        def retrieve(query, specification_name):
+            retrieve_calls.append(query)
+            if "customer" in query:
+                return [chunk("POST /v1/customers")]
+            if "payment" in query:
+                return [chunk("POST /v1/payment_methods/{id}/attach")]
+            return [chunk("POST /v1/subscriptions")]
+
+        answers = iter([
+            "**Step 1: Customer**\n**Step 2: Payment method**",
+            "**Step 1: Customer**\n**Step 2: Payment method**\n**Step 3: Subscription**",
+        ])
+
+        async def generate(question, chunks):
+            generation_chunks.append(chunks)
+            return next(answers)
+
+        async def rewrite(question, answer, chunks):
+            self.fail("workflow retries must not collapse into one rewritten query")
+
+        async def decompose(question):
+            return ["create customer", "attach payment method", "create subscription"]
+
+        result = await run_confidence_retry(
+            "create a subscribed customer", "stripe", retrieve, generate,
+            lambda question, answer, chunks: 90,
+            rewrite,
+            decompose=decompose,
+        )
+
+        self.assertEqual(result.selected_attempt, 2)
+        self.assertEqual(result.confidence, 90)
+        self.assertEqual(len(generation_chunks), 2)
+        self.assertIs(generation_chunks[0], generation_chunks[1])
+        self.assertEqual(len(retrieve_calls), 3)
+
+    async def test_complete_workflow_uses_provider_specific_threshold(self):
+        generate_calls = 0
+
+        def retrieve(query, specification_name):
+            return [chunk("POST /operation")]
+
+        async def generate(question, chunks):
+            nonlocal generate_calls
+            generate_calls += 1
+            return "**Step 1: One**\n**Step 2: Two**\n**Step 3: Three**"
+
+        async def rewrite(question, answer, chunks):
+            self.fail("a complete workflow above its threshold should not retry")
+
+        async def decompose(question):
+            return ["one", "two", "three"]
+
+        result = await run_confidence_retry(
+            "three steps", "spec", retrieve, generate,
+            lambda question, answer, chunks: 65,
+            rewrite,
+            decompose=decompose,
+            workflow_confidence_threshold=60,
+        )
+
+        self.assertEqual(result.confidence, 65)
+        self.assertEqual(result.attempts, 1)
+        self.assertEqual(generate_calls, 1)
+
 
 class FollowUpResolutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_follow_up_is_resolved_from_recent_history(self):

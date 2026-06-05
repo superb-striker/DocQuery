@@ -98,6 +98,7 @@ async def run_confidence_retry(
     score: Score,
     rewrite: Rewrite,
     confidence_threshold: int = 70,
+    workflow_confidence_threshold: int | None = None,
     decompose: Decompose | None = None,
     max_subqueries: int = 3,
     max_chunks: int = 15,
@@ -128,9 +129,47 @@ async def run_confidence_retry(
             score(question, answer, chunks), answer, subqueries
         ),
     )
-    if first.confidence >= confidence_threshold:
+    effective_threshold = (
+        workflow_confidence_threshold
+        if len(subqueries) > 1 and workflow_confidence_threshold is not None
+        else confidence_threshold
+    )
+    if first.confidence >= effective_threshold:
         return _to_result(
             first, attempts=1, retried=False, selected_attempt=1,
+            subqueries=subqueries,
+        )
+
+    # A workflow retry must retain evidence for every planned operation. A
+    # single rewritten query tends to collapse retrieval onto only one step.
+    if len(subqueries) > 1:
+        try:
+            retry_answer = await generate(question, chunks)
+            if not retry_answer:
+                return _to_result(
+                    first, attempts=2, retried=True, selected_attempt=1,
+                    subqueries=subqueries,
+                )
+            second = QueryAttempt(
+                retrieval_query=question,
+                answer=retry_answer,
+                chunks=chunks,
+                confidence=_workflow_adjusted_score(
+                    score(question, retry_answer, chunks), retry_answer, subqueries
+                ),
+            )
+        except Exception:
+            return _to_result(
+                first, attempts=2, retried=True, selected_attempt=1,
+                subqueries=subqueries,
+            )
+        if second.confidence > first.confidence:
+            return _to_result(
+                second, attempts=2, retried=True, selected_attempt=2,
+                subqueries=subqueries,
+            )
+        return _to_result(
+            first, attempts=2, retried=True, selected_attempt=1,
             subqueries=subqueries,
         )
 

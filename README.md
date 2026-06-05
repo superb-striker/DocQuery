@@ -289,8 +289,10 @@ DocQuery/
 
 Choose Groq, Gemini, or Hugging Face above the question box. Each response shows
 the provider, model, latency, LLM call count, token usage (when reported), and
-evidence budget. Groq receives at most 8 retrieved chunks to stay friendlier to
-free-tier token limits; Gemini and Hugging Face receive at most 15.
+evidence budget. Groq receives at most 8 retrieved chunks within a 10,000-character,
+schema-aware evidence budget; oversized request schemas are compacted while
+preserving required and workflow-linking fields. Gemini and Hugging Face retain
+larger evidence budgets.
 
 ### Resetting the Vector Store
 

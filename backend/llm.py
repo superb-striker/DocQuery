@@ -1,4 +1,6 @@
+import json
 import os
+import re
 from contextvars import ContextVar
 
 import httpx
@@ -18,6 +20,7 @@ PROVIDERS = {
         "model": "openai/gpt-oss-120b",
         # Keep Groq's free-tier token use deliberately lower.
         "max_chunks": 8,
+        "max_evidence_chars": 10000,
     },
     "gemini": {
         "label": "Gemini",
@@ -25,6 +28,7 @@ PROVIDERS = {
         "api_key_env": "GEMINI_API_KEY",
         "model": "gemini-3.8-flash",
         "max_chunks": 15,
+        "max_evidence_chars": 40000,
     },
     "huggingface": {
         "label": "Hugging Face",
@@ -32,6 +36,7 @@ PROVIDERS = {
         "api_key_env": "HF_TOKEN",
         "model": "meta-llama/Llama-3.1-8B-Instruct:novita",
         "max_chunks": 15,
+        "max_evidence_chars": 24000,
     },
 }
 
@@ -60,6 +65,7 @@ def provider_catalog() -> list[dict]:
             "label": config["label"],
             "model": config["model"],
             "max_chunks": config["max_chunks"],
+            "max_evidence_chars": config["max_evidence_chars"],
             "available": bool(os.getenv(config["api_key_env"])),
         }
         for provider, config in PROVIDERS.items()
@@ -100,11 +106,15 @@ def build_llm_request(prompt: str, provider: str) -> tuple[str, dict, dict]:
     payload = {
         "model": config["model"],
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 600,
         "temperature": 0.1,
         # Groq accepts at most four stop sequences; these work for every provider.
         "stop": ["USER QUESTION:", "[INST]", "SPEC SECTIONS:", "\n\nQUESTION"],
     }
+    if provider == "groq":
+        payload["max_completion_tokens"] = 900
+        payload["reasoning_effort"] = "low"
+    else:
+        payload["max_tokens"] = 600
     if provider == "gemini":
         payload["reasoning_effort"] = "low"
     return (
@@ -113,14 +123,97 @@ def build_llm_request(prompt: str, provider: str) -> tuple[str, dict, dict]:
         payload,
     )
 
-# Prompt Builder 
-def build_prompt(query: str, chunks: list[dict]) -> str:
+def _compact_chunk_text(text: str, query: str, max_chars: int) -> str:
+    """Compact expanded OpenAPI schemas while retaining workflow-linking fields."""
+    if len(text) <= max_chars:
+        return text
+
+    body_match = re.search(
+        r"Request Body Fields:\s*(\{.*?\})\s*Responses:", text, re.DOTALL
+    )
+    if not body_match:
+        head_size = max(1, int(max_chars * 0.8))
+        tail_size = max_chars - head_size
+        return f"{text[:head_size]}\n...[compacted]...\n{text[-tail_size:]}"
+
+    prefix_budget = min(1200, max(500, max_chars // 2))
+    prefix = text[:body_match.start()].strip()[:prefix_budget]
+    response_text = text[body_match.end():].strip()[:250]
+    try:
+        body = json.loads(body_match.group(1))
+    except json.JSONDecodeError:
+        return f"{prefix}\nRequest Body Fields: [schema compacted]\nResponses: {response_text}"
+
+    required = set(body.get("required_fields") or [])
+    fields = body.get("all_fields") or {}
+    query_terms = {
+        word for word in re.findall(r"[a-z0-9]+", query.casefold())
+        if len(word) >= 3
+    }
+    connector_fields = {
+        "customer", "customer_id", "payment_method", "default_payment_method",
+        "source", "items", "price", "prices", "subscription",
+    }
+
+    def field_priority(item: tuple[str, object]) -> int:
+        name, details = item
+        name_terms = set(name.casefold().split("_"))
+        description = (
+            str(details.get("description", "")).casefold()
+            if isinstance(details, dict) else ""
+        )
+        return (
+            (100 if name in required else 0)
+            + (40 if name in connector_fields else 0)
+            + 15 * len(name_terms.intersection(query_terms))
+            + min(10, sum(term in description for term in query_terms))
+        )
+
+    ranked_fields = sorted(fields.items(), key=field_priority, reverse=True)
+    lines = []
+    fixed = f"{prefix}\nRequest Body Fields (compacted):\nResponses: {response_text}"
+    remaining = max(200, max_chars - len(fixed) - 50)
+    for name, details in ranked_fields:
+        if isinstance(details, dict):
+            field_type = details.get("type", "unspecified")
+            requirement = "required" if name in required else "optional"
+            description = " ".join(
+                str(details.get("description", "")).split()
+            )[:180]
+            enum = details.get("enum")
+            enum_text = f"; allowed={enum}" if enum else ""
+            line = f"- {name} ({field_type}, {requirement}{enum_text}): {description}"
+        else:
+            line = f"- {name}: {str(details)[:180]}"
+        if len(line) + 1 > remaining:
+            continue
+        lines.append(line)
+        remaining -= len(line) + 1
+        if remaining < 80:
+            break
+    fields_text = "\n".join(lines) or "- No fields fit within the evidence budget."
+    return (
+        f"{prefix}\nRequest Body Fields (compacted):\n{fields_text}"
+        f"\nResponses: {response_text}"
+    )[:max_chars]
+
+
+# Prompt Builder
+def build_prompt(
+    query: str,
+    chunks: list[dict],
+    max_evidence_chars: int | None = None,
+) -> str:
     if not query:
         logger.warning("Empty query passed to build_prompt.")
     if not chunks:
         logger.warning("No chunks provided to build_prompt.")
     try:
         context_sections = []
+        per_chunk_budget = (
+            max(900, max_evidence_chars // max(1, len(chunks)))
+            if max_evidence_chars else None
+        )
         for chunk in chunks:
             metadata = chunk.get("metadata", {})
             specification = (
@@ -132,8 +225,13 @@ def build_prompt(query: str, chunks: list[dict]) -> str:
                 f"\n[Evidence retrieved for: {retrieval_query}]"
                 if retrieval_query else ""
             )
+            chunk_text = chunk["text"]
+            if per_chunk_budget:
+                chunk_text = _compact_chunk_text(
+                    chunk_text, query, per_chunk_budget
+                )
             context_sections.append(
-                f"[Specification: {specification}]{evidence_label}\n{chunk['text']}"
+                f"[Specification: {specification}]{evidence_label}\n{chunk_text}"
             )
         context = "\n\n---\n\n".join(context_sections)
     except KeyError as e:
@@ -327,6 +425,8 @@ async def query_llm(prompt: str, provider: str = "groq") -> str:
             detail = "rate limit reached; wait briefly or try the other provider"
         elif status in (401, 403):
             detail = f"authentication failed; check {config['api_key_env']}"
+        elif status == 413:
+            detail = "request was too large for the current model limits"
         else:
             detail = f"request failed with HTTP {status}"
         raise LLMProviderError(f"{config['label']} {detail}.") from e
