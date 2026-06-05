@@ -120,33 +120,71 @@ def build_prompt(query: str, chunks: list[dict]) -> str:
     if not chunks:
         logger.warning("No chunks provided to build_prompt.")
     try:
-        context = "\n\n---\n\n".join(
-            f"[Specification: "
-            f"{c.get('metadata', {}).get('collection_name') or c.get('metadata', {}).get('specification_name', 'Unknown')}]\n"
-            f"{c['text']}"
-            for c in chunks
-        )
+        context_sections = []
+        for chunk in chunks:
+            metadata = chunk.get("metadata", {})
+            specification = (
+                metadata.get("collection_name")
+                or metadata.get("specification_name", "Unknown")
+            )
+            retrieval_query = metadata.get("retrieval_query")
+            evidence_label = (
+                f"\n[Evidence retrieved for: {retrieval_query}]"
+                if retrieval_query else ""
+            )
+            context_sections.append(
+                f"[Specification: {specification}]{evidence_label}\n{chunk['text']}"
+            )
+        context = "\n\n---\n\n".join(context_sections)
     except KeyError as e:
         logger.error(f"Chunk missing 'text' field: {e}")
         context = ""
+    workflow_steps = next((
+        chunk.get("metadata", {}).get("workflow_steps")
+        for chunk in chunks
+        if chunk.get("metadata", {}).get("workflow_steps")
+    ), [query])
+    workflow_plan = "\n".join(
+        f"{index}. {step}" for index, step in enumerate(workflow_steps, 1)
+    )
+    if len(workflow_steps) > 1:
+        output_format = f"""The question is a {len(workflow_steps)}-step workflow. Cover every step in
+the WORKFLOW PLAN, in order, using this exact repeated format:
+
+**Step 1: [short operation name]**
+**Endpoint:** [HTTP METHOD] [path]
+**Purpose:** [one sentence]
+**Required input:** [only required or workflow-linking fields from the spec]
+**Pass forward:** [identifier needed by a later step, or "Nothing"]
+**Notes:** [grounded constraints, or "Not specified in spec"]
+
+Repeat through **Step {len(workflow_steps)}**. Never substitute a related endpoint
+for the requested operation. If exact evidence for a step is missing, keep the
+step and write: Exact endpoint not found in retrieved spec sections."""
+    else:
+        output_format = """Follow this exact format:
+
+**Endpoint:** [HTTP METHOD] [path]
+**Summary:** [one sentence from the spec]
+**Parameters:** [explicit parameters, or "None listed in spec"]
+**Request Body:** [explicit fields, or "Not specified in spec"]
+**Notes:** [other relevant details from the spec only]"""
+
     prompt = f"""You are an API documentation assistant. Answer using ONLY the SPEC SECTIONS below.
-    
-            OUTPUT FORMAT - follow this exactly:
-            **Endpoint:** [HTTP METHOD] [path]
-            **Summary:** [one sentence from the spec]
-            **Parameters:** [list only parameters explicitly named in the spec, or "None listed in spec"]
-            **Request Body:** [list only fields explicitly named in the spec, or "Not specified in spec"]
-            **Notes:** [any other relevant details from the spec only, do not reference other things in this spec.]
 
-            If the spec sections do not contain enough information to fill a field, write "Not specified in spec" for that field.
-            Do not add information from outside the spec. 
+{output_format}
 
-            SPEC SECTIONS:
-            {context}
+If the evidence is insufficient, say so explicitly. Do not add outside knowledge.
 
-            QUESTION: {query}
+WORKFLOW PLAN:
+{workflow_plan}
 
-            ANSWER:"""
+SPEC SECTIONS:
+{context}
+
+QUESTION: {query}
+
+ANSWER:"""
     logger.debug("Prompt built successfully.")
     return prompt
 
@@ -190,7 +228,9 @@ def build_query_decomposition_prompt(question: str) -> str:
 If the user's question requires distinct API operations, split it into separate,
 standalone retrieval queries. If it is a simple question, keep it as one query.
 Return only a valid JSON array of one to three strings. Preserve concrete API
-nouns, field names, and constraints. Do not answer the question.
+nouns, field names, and constraints. Include the intended HTTP method and action
+in each query when implied, for example "POST create subscription for customer".
+Each query must describe exactly one requested operation. Do not answer the question.
 
 USER QUESTION:
 {question}

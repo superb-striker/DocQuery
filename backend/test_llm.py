@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from llm import (
     LLMProviderError,
+    build_prompt,
     build_llm_request,
     get_provider_config,
     provider_catalog,
@@ -36,8 +37,10 @@ class LLMProviderTests(unittest.TestCase):
         self.assertEqual(payload["reasoning_effort"], "low")
 
     def test_missing_key_is_actionable(self):
-        with patch.dict(os.environ, {}, clear=True) and self.assertRaisesRegex(LLMProviderError, "GEMINI_API_KEY"):
-                build_llm_request("hello", "gemini")
+        with patch.dict(os.environ, {}, clear=True), self.assertRaisesRegex(
+            LLMProviderError, "GEMINI_API_KEY"
+        ):
+            build_llm_request("hello", "gemini")
 
     def test_provider_catalog_does_not_expose_keys(self):
         with patch.dict(os.environ, {"GROQ_API_KEY": "secret"}, clear=True):
@@ -45,6 +48,29 @@ class LLMProviderTests(unittest.TestCase):
 
         self.assertTrue(groq["available"])
         self.assertNotIn("secret", str(groq))
+
+    def test_workflow_prompt_requires_every_planned_step(self):
+        steps = [
+            "POST create customer",
+            "POST attach payment method",
+            "POST create subscription",
+        ]
+        chunks = [{
+            "text": "Method: POST\nPath: /v1/customers",
+            "metadata": {
+                "method": "POST",
+                "path": "/v1/customers",
+                "retrieval_query": steps[0],
+                "workflow_steps": steps,
+            },
+        }]
+
+        prompt = build_prompt("create a subscribed customer", chunks)
+
+        self.assertIn("3-step workflow", prompt)
+        self.assertIn("Repeat through **Step 3**", prompt)
+        self.assertIn("3. POST create subscription", prompt)
+        self.assertIn("[Evidence retrieved for: POST create customer]", prompt)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+import re
 
 Chunks = list[dict]
 Retrieve = Callable[[str, str], Chunks]
@@ -123,7 +124,9 @@ async def run_confidence_retry(
         retrieval_query=question,
         answer=answer,
         chunks=chunks,
-        confidence=score(question, answer, chunks),
+        confidence=_workflow_adjusted_score(
+            score(question, answer, chunks), answer, subqueries
+        ),
     )
     if first.confidence >= confidence_threshold:
         return _to_result(
@@ -140,6 +143,11 @@ async def run_confidence_retry(
             )
 
         retry_chunks = retrieve(refined_query, specification_name) or []
+        retry_chunks = _tag_workflow_chunks(
+            _prioritize_operation_matches(refined_query, retry_chunks),
+            refined_query,
+            subqueries,
+        )
         if len(retry_chunks) > max_chunks:
             retry_chunks = retry_chunks[:max_chunks]
         if not retry_chunks:
@@ -159,7 +167,9 @@ async def run_confidence_retry(
             retrieval_query=refined_query,
             answer=retry_answer,
             chunks=retry_chunks,
-            confidence=score(question, retry_answer, retry_chunks),
+            confidence=_workflow_adjusted_score(
+                score(question, retry_answer, retry_chunks), retry_answer, subqueries
+            ),
         )
     except Exception:
         # Self-correction is best-effort; a usable first answer must not be lost.
@@ -217,7 +227,10 @@ def _retrieve_and_merge(
     per_query_limit = max(1, max_chunks // max(1, len(queries)))
     for query in queries:
         added_for_query = 0
-        for chunk in retrieve(query, specification_name) or []:
+        retrieved = _prioritize_operation_matches(
+            query, retrieve(query, specification_name) or []
+        )
+        for chunk in retrieved:
             metadata = chunk.get("metadata", {})
             key = (
                 metadata.get("collection_name")
@@ -230,11 +243,86 @@ def _retrieve_and_merge(
             if key in seen:
                 continue
             seen.add(key)
-            merged.append(chunk)
+            merged.extend(_tag_workflow_chunks([chunk], query, queries))
             added_for_query += 1
             if added_for_query >= per_query_limit or len(merged) >= max_chunks:
                 break
     return merged
+
+
+def _tag_workflow_chunks(
+    chunks: Chunks,
+    retrieval_query: str,
+    workflow_steps: list[str],
+) -> Chunks:
+    """Attach request-local workflow context without mutating stored chunks."""
+    if len(workflow_steps) <= 1:
+        return chunks
+    return [
+        {
+            **chunk,
+            "metadata": {
+                **chunk.get("metadata", {}),
+                "retrieval_query": retrieval_query,
+                "workflow_steps": list(workflow_steps),
+            },
+        }
+        for chunk in chunks
+    ]
+
+
+def _prioritize_operation_matches(query: str, chunks: Chunks) -> Chunks:
+    """Prefer endpoints whose method and summary match an explicit API action."""
+    query_words = set(re.findall(r"[a-z]+", query.casefold()))
+    action_methods = {
+        "create": "POST",
+        "attach": "POST",
+        "add": "POST",
+        "list": "GET",
+        "get": "GET",
+        "retrieve": "GET",
+        "delete": "DELETE",
+        "remove": "DELETE",
+        "update": "PATCH",
+    }
+    requested_actions = query_words.intersection(action_methods)
+    if not requested_actions:
+        return chunks
+
+    def priority(chunk: dict) -> int:
+        metadata = chunk.get("metadata", {})
+        summary_words = set(
+            re.findall(r"[a-z]+", str(metadata.get("summary", "")).casefold())
+        )
+        method = str(metadata.get("method", "")).upper()
+        action_score = 4 * len(requested_actions.intersection(summary_words))
+        method_score = 2 if any(
+            method == action_methods[action] for action in requested_actions
+        ) else 0
+        return action_score + method_score
+
+    ranked = sorted(chunks, key=priority, reverse=True)
+    if all(before is after for before, after in zip(chunks, ranked)):
+        return chunks
+    return ranked
+
+
+def _workflow_adjusted_score(
+    grounding_score: int,
+    answer: str,
+    workflow_steps: list[str],
+) -> int:
+    """Penalize grounded answers that omit requested workflow operations."""
+    expected = len(workflow_steps)
+    if expected <= 1:
+        return grounding_score
+    answered = {
+        int(number)
+        for number in re.findall(r"\bStep\s+(\d+)\b", answer, re.IGNORECASE)
+        if 1 <= int(number) <= expected
+    }
+    completeness = len(answered) / expected
+    return round(grounding_score * completeness)
 
 
 def _to_result(

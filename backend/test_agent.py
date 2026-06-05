@@ -1,6 +1,7 @@
 import unittest
 
 from backend.agent import (
+    _workflow_adjusted_score,
     resolve_follow_up,
     run_confidence_retry,
     select_specifications,
@@ -123,7 +124,7 @@ class ConfidenceRetryTests(unittest.IsolatedAsyncioTestCase):
             return [shared, chunk("DELETE /pets/{id}")]
 
         async def generate(question, chunks):
-            return ",".join(item["metadata"]["path"] for item in chunks)
+            return "**Step 1: Create**\n**Step 2: Delete**"
 
         async def rewrite(question, answer, chunks):
             self.fail("a confident planned answer should not retry")
@@ -144,6 +145,13 @@ class ConfidenceRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, ["create a pet", "delete a pet"])
         self.assertEqual(len(result.chunks), 3)
         self.assertEqual(result.subqueries, ["create a pet", "delete a pet"])
+        self.assertEqual(
+            result.chunks[0]["metadata"]["workflow_steps"],
+            ["create a pet", "delete a pet"],
+        )
+        self.assertEqual(
+            result.chunks[0]["metadata"]["retrieval_query"], "create a pet"
+        )
 
     async def test_invalid_plan_falls_back_to_original_question(self):
         calls = []
@@ -170,6 +178,51 @@ class ConfidenceRetryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(calls, ["list pets"])
         self.assertEqual(result.subqueries, ["list pets"])
+
+    async def test_explicit_action_prioritizes_matching_endpoint(self):
+        candidates = [
+            chunk("POST /v1/subscriptions/{id}/migrate"),
+            chunk("POST /v1/subscriptions"),
+        ]
+        candidates[0]["metadata"]["summary"] = "Migrate a subscription"
+        candidates[1]["metadata"]["summary"] = "Create a subscription"
+
+        def retrieve(query, specification_name):
+            return candidates
+
+        async def generate(question, chunks):
+            return chunks[0]["metadata"]["path"]
+
+        async def rewrite(question, answer, chunks):
+            return question
+
+        async def decompose(question):
+            return ["POST create subscription for customer"]
+
+        result = await run_confidence_retry(
+            "create a subscription", "stripe", retrieve, generate,
+            lambda question, answer, chunks: 90,
+            rewrite,
+            decompose=decompose,
+        )
+
+        self.assertEqual(result.answer, "/v1/subscriptions")
+
+    def test_workflow_score_penalizes_missing_steps(self):
+        steps = ["create customer", "attach payment method", "create subscription"]
+
+        self.assertEqual(
+            _workflow_adjusted_score(90, "**Step 1: Create customer**", steps),
+            30,
+        )
+        self.assertEqual(
+            _workflow_adjusted_score(
+                90,
+                "**Step 1: Customer**\n**Step 2: Attach**\n**Step 3: Subscription**",
+                steps,
+            ),
+            90,
+        )
 
 
 class FollowUpResolutionTests(unittest.IsolatedAsyncioTestCase):

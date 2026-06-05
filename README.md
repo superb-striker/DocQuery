@@ -41,7 +41,7 @@ The standard advice for understanding an API is "just paste the spec into ChatGP
 - **Voice input** - record a question via the browser's MediaRecorder API; audio is transcribed by Whisper via Groq (~1s) and populated into the query box automatically.
 - **Pipeline observability** - every query is traced end-to-end with Langfuse; retrieval span logs which endpoints were retrieved, the LLM generation span logs the full prompt and answer, and confidence scores are tracked as metrics across all queries.
 - **Confidence-gated self-correction** - when an answer scores below the grounding threshold, the query agent rewrites the retrieval query and makes one bounded retry, keeping the better-grounded answer.
-- **Multi-step query planning** - compound questions are decomposed into at most three focused retrieval queries; endpoint evidence is deduplicated and combined before answer generation.
+- **Workflow-aware answers** - compound questions are decomposed into at most three focused operations; evidence is labelled per operation, exact action matches are prioritized, and the answer must cover every step in order. Missing steps reduce confidence and trigger correction.
 - **Conversational follow-ups** - the browser sends the last three successful exchanges to resolve references such as "that endpoint" into standalone retrieval questions; history is not stored server-side and resets when switching specifications.
 - **Cross-spec queries** - an "All specifications" mode routes questions to at most three relevant API collections, combines their evidence, and labels every cited endpoint with its source specification.
 
