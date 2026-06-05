@@ -364,6 +364,33 @@ def _workflow_adjusted_score(
     return round(grounding_score * completeness)
 
 
+def order_chunks_by_answer_citations(answer: str, chunks: Chunks) -> Chunks:
+    """Place endpoints cited by the answer first, preserving all stable ties."""
+    matches = re.findall(
+        r"\*\*Endpoint:\*\*\s*`?\s*([A-Za-z]+)\s+([^`\s*]+)",
+        answer,
+    )
+    cited = []
+    for method, path in matches:
+        key = (method.upper(), path.rstrip(".,;").rstrip("/") or "/")
+        if key not in cited:
+            cited.append(key)
+    if not cited:
+        return chunks
+
+    citation_rank = {key: rank for rank, key in enumerate(cited)}
+
+    def endpoint_key(chunk: dict) -> tuple[str, str]:
+        metadata = chunk.get("metadata", {})
+        path = str(metadata.get("path", "")).rstrip("/") or "/"
+        return str(metadata.get("method", "")).upper(), path
+
+    return sorted(
+        chunks,
+        key=lambda chunk: citation_rank.get(endpoint_key(chunk), len(cited)),
+    )
+
+
 def _to_result(
     attempt: QueryAttempt,
     attempts: int,

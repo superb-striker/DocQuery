@@ -4,7 +4,12 @@ import time
 from typing import Literal
 
 import httpx
-from agent import resolve_follow_up, run_confidence_retry, select_specifications
+from agent import (
+    order_chunks_by_answer_citations,
+    resolve_follow_up,
+    run_confidence_retry,
+    select_specifications,
+)
 from confidence import score_confidence
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -354,6 +359,9 @@ async def query(req: QueryRequest):
             f"(confidence={result.confidence}, attempts={result.attempts}, "
             f"selected_attempt={result.selected_attempt})."
         )
+        ordered_source_chunks = order_chunks_by_answer_citations(
+            result.answer, result.chunks
+        )
         sources = [
             {
                 "endpoint": f"{c['metadata']['method']} {c['metadata']['path']}",
@@ -363,7 +371,7 @@ async def query(req: QueryRequest):
                     or c['metadata'].get("specification_name", "Unknown")
                 ),
             }
-            for c in result.chunks
+            for c in ordered_source_chunks
         ]
         elapsed_ms = round((time.perf_counter() - started_at) * 1000)
         llm = {

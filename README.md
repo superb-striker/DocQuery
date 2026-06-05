@@ -34,7 +34,7 @@ The standard advice for understanding an API is "just paste the spec into ChatGP
 - **RAG pipeline** - OpenAPI spec is chunked, embedded with `all-mpnet-base-v2`, and stored in ChromaDB alongside a BM25 index; each query runs dense and keyword retrieval in parallel, fuses them with Reciprocal Rank Fusion (RRF), then re-ranks candidates with a cross-encoder before hitting the LLM.
 - **`$ref` resolution** - request body schemas are fully dereferenced at ingest time, including `allOf`, `anyOf`, and `oneOf` composition patterns (up to 6 levels deep), so field names like `name` are semantically searchable.
 - **Confidence scoring** - a hybrid of Vectara's HHEM hallucination model (70%) and cosine similarity (30%), with a JSON field grounding check blended into the HHEM score. Falls back to cosine-only if HHEM is unavailable.
-- **Source citations** - every answer includes the exact HTTP method + path that grounded it
+- **Source citations** - every answer includes the exact HTTP method + path that grounded it; endpoints cited in the final answer appear first in workflow order, followed by supporting retrieval evidence.
 - **Multi-spec support** - ingest multiple APIs simultaneously and switch between them with one click
 - **Dual ingest modes** - paste a public URL or upload a local `.json` file (for private/internal specs)
 - **Persistent vector store** - ChromaDB and BM25 indexes persist to disk; specs survive restarts without re-ingestion.

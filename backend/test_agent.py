@@ -2,6 +2,7 @@ import unittest
 
 from backend.agent import (
     _workflow_adjusted_score,
+    order_chunks_by_answer_citations,
     resolve_follow_up,
     run_confidence_retry,
     select_specifications,
@@ -292,6 +293,49 @@ class ConfidenceRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.confidence, 65)
         self.assertEqual(result.attempts, 1)
         self.assertEqual(generate_calls, 1)
+
+
+class CitationOrderingTests(unittest.TestCase):
+    def test_answer_endpoints_come_before_supporting_evidence(self):
+        chunks = [
+            chunk("POST /v1/customer_sessions"),
+            chunk("POST /v1/customers"),
+            chunk("POST /v1/payment_methods/{payment_method}/attach"),
+            chunk("POST /v1/setup_intents"),
+            chunk("POST /v1/customers/{customer}/subscriptions"),
+            chunk("POST /v1/subscriptions"),
+        ]
+        answer = """**Step 1: Customer**
+**Endpoint:** POST /v1/customers
+**Step 2: Payment method**
+**Endpoint:** `POST /v1/payment_methods/{payment_method}/attach`
+**Step 3: Subscription**
+**Endpoint:** POST /v1/customers/{customer}/subscriptions
+"""
+
+        ordered = order_chunks_by_answer_citations(answer, chunks)
+        endpoints = [
+            f"{item['metadata']['method']} {item['metadata']['path']}"
+            for item in ordered
+        ]
+
+        self.assertEqual(endpoints[:3], [
+            "POST /v1/customers",
+            "POST /v1/payment_methods/{payment_method}/attach",
+            "POST /v1/customers/{customer}/subscriptions",
+        ])
+        self.assertEqual(endpoints[3:], [
+            "POST /v1/customer_sessions",
+            "POST /v1/setup_intents",
+            "POST /v1/subscriptions",
+        ])
+
+    def test_no_answer_citations_preserves_retrieval_order(self):
+        chunks = [chunk("GET /first"), chunk("GET /second")]
+
+        ordered = order_chunks_by_answer_citations("No endpoint found.", chunks)
+
+        self.assertIs(ordered, chunks)
 
 
 class FollowUpResolutionTests(unittest.IsolatedAsyncioTestCase):
