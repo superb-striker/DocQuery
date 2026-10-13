@@ -4,6 +4,7 @@ from backend.agent import (
     _workflow_adjusted_score,
     order_chunks_by_answer_citations,
     resolve_follow_up,
+    run_agent_graph,
     run_confidence_retry,
     select_specifications,
 )
@@ -320,6 +321,57 @@ class ConfidenceRetryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.confidence, 65)
         self.assertEqual(result.attempts, 1)
+
+
+class AgentGraphTests(unittest.IsolatedAsyncioTestCase):
+    async def test_full_graph_contextualizes_routes_decomposes_and_retrieves(self):
+        retrievals = []
+
+        async def contextualize(question, history):
+            self.assertEqual(len(history), 1)
+            return "create and then list invoices"
+
+        async def route(question, available):
+            self.assertEqual(question, "create and then list invoices")
+            return ["billing"]
+
+        async def decompose(question):
+            return ["create invoice", "list invoices"]
+
+        def retrieve(question, selected_specs):
+            retrievals.append((question, selected_specs))
+            method = "POST" if question.startswith("create") else "GET"
+            return [chunk(f"{method} /invoices")]
+
+        async def generate(question, chunks):
+            return "**Step 1: Create**\n**Step 2: List**"
+
+        async def rewrite(question, answer, chunks):
+            self.fail("a confident answer should not be rewritten")
+
+        result = await run_agent_graph(
+            question="What about invoices?",
+            history=[{"question": "How does billing work?", "answer": "Use the API."}],
+            specification_name="__all__",
+            available_specifications=["identity", "billing", "orders", "shipping"],
+            contextualize=contextualize,
+            route=route,
+            retrieve=retrieve,
+            generate=generate,
+            score=lambda question, answer, chunks: 90,
+            rewrite=rewrite,
+            decompose=decompose,
+        )
+
+        self.assertEqual(result.subqueries, ["create invoice", "list invoices"])
+        self.assertEqual(retrievals, [
+            ("create invoice", ["billing"]),
+            ("list invoices", ["billing"]),
+        ])
+        self.assertEqual(result.attempts, 1)
+        self.assertEqual(result.confidence, 90)
+        self.assertEqual(result.resolved_question, "create and then list invoices")
+        self.assertEqual(result.selected_specs, ["billing"])
 
 
 class CitationOrderingTests(unittest.TestCase):

@@ -6,9 +6,7 @@ from typing import Literal
 import httpx
 from agent import (
     order_chunks_by_answer_citations,
-    resolve_follow_up,
-    run_confidence_retry,
-    select_specifications,
+    run_agent_graph,
 )
 from confidence import score_confidence
 from dotenv import load_dotenv
@@ -316,27 +314,18 @@ async def query(req: QueryRequest):
             {"question": turn.question, "answer": turn.answer}
             for turn in req.history
         ]
-        resolved_question = await resolve_follow_up(
-            req.question,
-            history,
-            contextualize,
-        )
         available_specs = specification_names()
-        if req.specification_name == ALL_SPECIFICATIONS:
-            selected_specs = await select_specifications(
-                resolved_question,
-                available_specs,
-                route,
-            )
-        else:
-            selected_specs = [req.specification_name]
 
-        def retrieve_selected(question: str, _specification_name: str):
+        def retrieve_selected(question: str, selected_specs: list[str]):
             return retrieve_from_specifications(question, selected_specs)
 
-        result = await run_confidence_retry(
-            question=resolved_question,
+        result = await run_agent_graph(
+            question=req.question,
+            history=history,
             specification_name=req.specification_name,
+            available_specifications=available_specs,
+            contextualize=contextualize,
+            route=route,
             retrieve=retrieve_selected,
             generate=generate,
             score=score_confidence,
@@ -344,6 +333,7 @@ async def query(req: QueryRequest):
             decompose=decompose,
             max_chunks=provider_config["max_chunks"],
             workflow_confidence_threshold=60 if provider == "groq" else 70,
+            all_specifications_value=ALL_SPECIFICATIONS,
         )
         if not result.chunks:
             logger.warning("No chunks found for query.")
@@ -395,8 +385,8 @@ async def query(req: QueryRequest):
                     "retried": result.retried,
                     "selected_attempt": result.selected_attempt,
                     "subqueries": result.subqueries,
-                    "resolved_question": resolved_question,
-                    "selected_specs": selected_specs,
+                    "resolved_question": result.resolved_question,
+                    "selected_specs": result.selected_specs,
                 },
             }
         )
@@ -413,8 +403,8 @@ async def query(req: QueryRequest):
                 "retried": result.retried,
                 "selected_attempt": result.selected_attempt,
                 "subqueries": result.subqueries,
-                "resolved_question": resolved_question,
-                "selected_specs": selected_specs,
+                "resolved_question": result.resolved_question,
+                "selected_specs": result.selected_specs,
             },
         }
     except HTTPException:
