@@ -56,7 +56,7 @@ The standard advice for understanding an API is "just paste the spec into ChatGP
 
 ## Architecture
 
-![Architecture](images/architecture.svg)
+![Architecture](images/architecture.png)
 
 The query path is a compiled LangGraph `StateGraph` rather than a single retrieve-and-generate call:
 
