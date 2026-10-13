@@ -6,6 +6,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688?style=flat-square&logo=fastapi&logoColor=white)
+![LangGraph](https://img.shields.io/badge/LangGraph-StateGraph-1C3C3C?style=flat-square)
 ![React](https://img.shields.io/badge/React-19+-61DAFB?style=flat-square&logo=react&logoColor=black)
 ![ChromaDB](https://img.shields.io/badge/ChromaDB-Vector_Store-FF6B35?style=flat-square)
 ![Langfuse](https://img.shields.io/badge/Langfuse-Observability-000000?style=flat-square)
@@ -24,7 +25,7 @@ The standard advice for understanding an API is "just paste the spec into ChatGP
 | Problem | DocQuery's Solution |
 |---|---|
 | Stripe's spec is ~50,000 lines - won't fit in any context window | RAG retrieves only the relevant chunks per query |
-| Whole specifications are too large or sensitive to send on every request | Specs stay in local indexes; only the bounded evidence selected for a query is sent to the configured LLM provider |
+| Whole specifications are too large or sensitive to send on every request | Specs are indexed locally; the selected LLM receives bounded evidence and question/planning context, including recent history or specification names when needed |
 | LLM training data has a cutoff - new endpoints are unknown | Re-ingest any time, answers always reflect the current spec |
 | Raw LLM answers can't cite where they got the answer | Every response includes the exact source endpoints |
 | Can't query multiple APIs simultaneously | Multi-spec support with per-spec ChromaDB collections |
@@ -35,19 +36,20 @@ The standard advice for understanding an API is "just paste the spec into ChatGP
 
 ## Features
 
-- **RAG pipeline** - OpenAPI spec is chunked, embedded with `all-mpnet-base-v2`, and stored in ChromaDB alongside a BM25 index; each query runs dense and keyword retrieval in parallel, fuses them with Reciprocal Rank Fusion (RRF), then re-ranks candidates with a cross-encoder before hitting the LLM.
+- **RAG pipeline** - OpenAPI spec is chunked, embedded with `all-mpnet-base-v2`, and stored in ChromaDB alongside a BM25 index built from tokenized chunk text; each query runs dense and keyword retrieval, fuses them with Reciprocal Rank Fusion (RRF), then re-ranks candidates with a cross-encoder before hitting the LLM.
 - **`$ref` resolution** - request body schemas are fully dereferenced at ingest time, including `allOf`, `anyOf`, and `oneOf` composition patterns (up to 6 levels deep), so field names like `name` are semantically searchable.
-- **Confidence scoring** - a hybrid of Vectara's HHEM hallucination model (70%) and cosine similarity (30%), with a JSON field grounding check blended into the HHEM score. Falls back to cosine-only if HHEM is unavailable.
+- **Confidence scoring** - 70% judge score + 30% cosine similarity. The judge itself blends Vectara's HHEM hallucination score (70%) with JSON field grounding (30%). Falls back to cosine-only if HHEM scoring fails.
 - **Source citations** - every answer includes the exact HTTP method + path that grounded it; endpoints cited in the final answer appear first in workflow order, followed by supporting retrieval evidence.
 - **Multi-spec support** - ingest multiple APIs simultaneously and switch between them with one click
 - **Dual ingest modes** - paste a public URL or upload a local `.json` file (for private/internal specs)
 - **Persistent vector store** - ChromaDB and BM25 indexes persist to disk; specs survive restarts without re-ingestion.
 - **Voice input** - record a question via the browser's MediaRecorder API; audio is transcribed by Whisper via Groq (~1s) and populated into the query box automatically.
 - **Pipeline observability** - every query is traced end-to-end with Langfuse; retrieval span logs which endpoints were retrieved, the LLM generation span logs the full prompt and answer, and confidence scores are tracked as metrics across all queries.
+- **LangGraph orchestration** - the full query lifecycle runs as a compiled `StateGraph`, with typed request state and confidence-driven conditional edges for bounded regeneration or rewrite-and-retrieval.
 - **Confidence-gated self-correction** - when an answer scores below the grounding threshold, the agent makes one bounded retry and keeps the better-grounded attempt. Workflow retries preserve the balanced evidence set; single-operation retries may rewrite and retrieve again.
 - **Workflow-aware answers** - compound questions are decomposed into at most three focused operations; evidence is labelled per operation, exact action matches are prioritized, and the answer must cover every step in order. Missing steps reduce confidence and trigger correction.
 - **Workflow-aware confidence** - each answer step is scored only against the evidence retrieved for its corresponding operation; missing steps or missing labelled evidence contribute zero instead of letting unrelated chunks inflate the score.
-- **Conversational follow-ups** - the browser sends the last three successful exchanges to resolve references such as "that endpoint" into standalone retrieval questions; history is not stored server-side and resets when switching specifications.
+- **Conversational follow-ups** - the browser sends the last three successful exchanges to resolve references such as "that endpoint" into standalone retrieval questions; the backend keeps no persistent conversation memory, and browser history resets when switching specifications. Provider calls and configured tracing can contain this context.
 - **Cross-spec queries** - an "All specifications" mode routes questions to at most three relevant API collections, combines their evidence, and labels every cited endpoint with its source specification.
 
 ---
@@ -56,15 +58,19 @@ The standard advice for understanding an API is "just paste the spec into ChatGP
 
 ![Architecture](images/architecture.svg)
 
-The query path is an agent loop rather than a single retrieve-and-generate call:
+The query path is a compiled LangGraph `StateGraph` rather than a single retrieve-and-generate call:
 
 1. Resolve conversational references using up to three client-supplied history turns.
 2. Route `All specifications` questions to at most three relevant local collections.
 3. Decompose compound questions into at most three ordered operations.
 4. Retrieve and balance hybrid evidence per operation, then compact it to the selected provider's budget.
 5. Generate with Groq, Gemini, or Hugging Face and score each answer step only against its labelled evidence group.
-6. If confidence is below the provider-aware threshold, make one corrective attempt and retain the higher-scoring result.
+6. Let the confidence node choose a conditional edge: finalize when the threshold is met, regenerate a workflow from the same balanced evidence, or rewrite a single-operation query and retrieve again. Stop after one corrective attempt and retain the higher-scoring result.
 7. Return citations reordered to match the endpoints as they appear in the answer, followed by supporting evidence.
+
+Planning uses the selected external LLM: contextualization sends the question and recent history when valid history is present; routing sends the question and available specification names for `All specifications` when more than three collections exist; decomposition sends the resolved question to produce one to three retrieval queries. These are separate calls. With no history, one selected specification, and no retry, the normal path makes two LLM calls: decomposition and answer generation. The response's `agent.resolved_question` and `agent.selected_specs` come from the completed graph state.
+
+The backend keeps indexes locally and does not persist conversation history as application memory. Query evidence and planning context are sent to the selected provider; optional voice input sends recorded audio to Groq Whisper. When Langfuse tracing is enabled, prompts (including retrieved evidence), answers, and run metadata are also sent to the configured Langfuse service.
 
 ---
 
@@ -76,17 +82,17 @@ The query path is an agent loop rather than a single retrieve-and-generate call:
 
 **Hybrid BM25 + dense retrieval with RRF** - Dense embeddings capture semantic similarity; BM25 catches exact keyword matches (endpoint paths, parameter names). Reciprocal Rank Fusion combines both ranked lists into a single candidate set without needing a tuned interpolation weight. A cross-encoder then re-ranks the fused top-N for precision before the prompt is built.
 
-**Bounded agent orchestration** - The agent resolves follow-ups, routes across specifications, and creates a plan of at most three operations before retrieval. Evidence is tagged by operation and merged with a per-step allowance so one high-scoring endpoint cannot crowd out the rest of a workflow. The loop is deliberately bounded to one corrective attempt, keeping latency and free-tier usage predictable.
+**Bounded agent orchestration** - A LangGraph `StateGraph` resolves follow-ups, routes across specifications, and creates a plan of at most three operations before retrieval. Its confidence node conditionally finalizes, regenerates from balanced workflow evidence, or rewrites and returns to retrieval for a single-operation query. The graph is deliberately bounded to one corrective attempt, keeping latency and free-tier usage predictable.
 
 **Provider-aware evidence budgets** - Groq, Gemini, and Hugging Face share the same orchestration path but receive different chunk and character budgets. Oversized schemas are compacted while preserving endpoint identity, required fields, and workflow-linking parameters. This prevents provider payload errors without weakening the plan itself.
 
-**BM25 + RRF over HyDE** - HyDE generates a hypothetical answer to use as a proxy query, which helps when queries are vague and documents are unstructured prose. API documentation is the opposite: queries are specific ("how do I update a customer") and documents are structured chunks with exact method+path identifiers. In that setting HyDE introduces hallucination risk at the retrieval stage - a fabricated answer may embed closer to the wrong endpoint than the right one. BM25 handles this domain more reliably: "update a customer" is a near-exact keyword match to `Update a customer — PATCH /v1/customers/{customer}`, whereas a dense-only retriever can rank it far lower because the embedding model doesn't bridge synonyms like "modify" → "update" at query time. Running both in parallel and fusing with RRF captures keyword precision and semantic recall without the hallucination risk HyDE introduces at retrieval.
+**BM25 + RRF over HyDE** - HyDE generates a hypothetical answer to use as a proxy query, which helps when queries are vague and documents are unstructured prose. API documentation is the opposite: queries are specific ("how do I update a customer") and documents are structured chunks with exact method+path identifiers. In that setting HyDE introduces hallucination risk at the retrieval stage - a fabricated answer may embed closer to the wrong endpoint than the right one. BM25 handles this domain more reliably: "update a customer" is a near-exact keyword match to `Update a customer — PATCH /v1/customers/{customer}`, whereas a dense-only retriever can rank it far lower because the embedding model doesn't bridge synonyms like "modify" → "update" at query time. Combining both with RRF captures keyword precision and semantic recall without the hallucination risk HyDE introduces at retrieval.
 
-**HHEM + cosine confidence scoring** - Vectara's Hallucination Evaluation Model (HHEM) scores factual consistency between the answer prose and retrieved chunks. For workflows, each `Step N` is evaluated against only its labelled retrieval group using a bounded, answer-relevant context, and the step scores are averaged with missing steps scored as zero. A separate JSON field grounding check verifies that code examples use only fields present in the spec. The signals are blended with cosine similarity as a fallback, giving a 0–100 grounding and completeness score.
+**HHEM + cosine confidence scoring** - Vectara's Hallucination Evaluation Model (HHEM) scores factual consistency between the answer prose and retrieved chunks. For workflows, each `Step N` is evaluated against only its labelled retrieval group using a bounded, answer-relevant context, and the step scores are averaged with missing steps or missing evidence scored as zero. A separate JSON field grounding check verifies that code examples use only fields present in the spec. Each step uses 70% judge + 30% cosine, where the judge is 70% HHEM + 30% JSON field grounding; if HHEM scoring fails, that step uses cosine alone.
 
 **Per-spec ChromaDB collections + BM25 indexes** - Each ingested API gets its own ChromaDB collection and a paired `.pkl` BM25 index on disk. This allows simultaneous multi-spec support with zero cross-contamination and O(1) collection switching.
 
-**Dual ingest modes** - URL ingest and local JSON upload both converge at the same `extract_chunks()` function. Ingestion and indexing stay local; query-time retrieved evidence is sent to whichever external LLM provider you select.
+**Dual ingest modes** - URL ingest and local JSON upload both converge at the same `extract_chunks()` function. Input checks cover JSON parsing and non-empty content, rather than full OpenAPI schema validation. Chunking and indexing run locally; query-time evidence and planning context are sent to whichever external LLM provider you select.
 
 **Selectable LLM providers** - Groq GPT-OSS, Gemini Flash, and Hugging Face Llama use one provider-neutral prompt and expose their model, latency, call count, token usage, and evidence budget in each response. This makes answer quality and free-tier trade-offs directly comparable.
 

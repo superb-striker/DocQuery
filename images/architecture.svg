@@ -1,6 +1,6 @@
-<svg width="100%" viewBox="0 0 1040 1146" role="img" aria-labelledby="title desc" style="background:#0a0a0f;border-radius:12px" xmlns="http://www.w3.org/2000/svg" xmlns:c2pa="http://c2pa.org/manifest">
+<svg width="100%" viewBox="0 0 1040 1146" role="img" aria-labelledby="title desc" style="background:#0a0a0f;border-radius:12px" xmlns="http://www.w3.org/2000/svg">
   <title id="title">DocQuery architecture</title>
-  <desc id="desc">Three zones: browser, local backend, and external services. The backend ingests OpenAPI specs into per-spec indexes, optionally transcribes voice through Groq Whisper, and answers queries through an LLM-assisted planning agent, per-operation retrieval, evidence building, answer generation, and a confidence gate with one bounded retry. Langfuse receives traces from the backend.</desc>
+  <desc id="desc">Three zones: browser, local backend, and external services. The backend ingests OpenAPI specs into per-spec indexes, optionally transcribes voice through Groq Whisper, and answers queries through a compiled LangGraph StateGraph. Its nodes contextualize, route, decompose, retrieve, generate, score confidence, and conditionally finalize or make one bounded retry. Langfuse receives traces from the backend.</desc>
   <defs>
     <marker id="aw" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto">
       <path d="M2 1.5L8 5L2 8.5" fill="none" stroke="#d6d6d1" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
@@ -49,11 +49,11 @@
 
   <rect x="174" y="48" width="666" height="1032" rx="10" fill="#5dcaa5" fill-opacity=".03" stroke="#5dcaa5" stroke-opacity=".4"/>
   <text x="507" y="68" class="zone" fill="#9fe1cb">LOCAL BACKEND · FastAPI</text>
-  <text x="507" y="84" class="zsub">specs, indexes and models stay on this machine</text>
+  <text x="507" y="84" class="zsub">local indexes, retrieval and confidence models</text>
 
   <rect x="860" y="48" width="166" height="1032" rx="10" fill="#ef9f27" fill-opacity=".03" stroke="#ef9f27" stroke-opacity=".5" stroke-dasharray="6 4"/>
   <text x="943" y="68" class="zone" fill="#fac775">EXTERNAL</text>
-  <text x="943" y="84" class="zsub">prompts + evidence only</text>
+  <text x="943" y="84" class="zsub">audio, prompts, traces</text>
 
   <!-- ===== Voice (optional) ===== -->
   <text x="190" y="108" class="band">voice · optional, before a query</text>
@@ -78,23 +78,23 @@
   <path d="M870 160H572" class="async"/>
   <text x="720" y="174" class="lab">transcript</text>
   <path d="M408 160H152" class="async"/>
-  <text x="279" y="174" class="lab">transcript → question box</text>
-  <path d="M24 162H18V359H22" class="async"/>
+  <text x="279" y="174" class="lab">transcript → Question input</text>
+  <path d="M40 174 V288 H87 V327" class="flow"/>
 
   <line x1="190" y1="190" x2="824" y2="190" stroke="#eaeae8" stroke-width=".5" opacity=".2"/>
 
   <!-- ===== Ingest ===== -->
   <text x="190" y="208" class="band">ingest · once per specification</text>
 
-  <rect x="24" y="223" width="126" height="50" rx="8" fill="#444441" stroke="#b4b2a9" stroke-width=".6"/>
-  <text x="87" y="244" class="t" fill="#d3d1c7">Load spec</text>
-  <text x="87" y="261" class="s" fill="#b4b2a9">URL or .json file</text>
+  <rect x="60" y="223" width="90" height="50" rx="8" fill="#444441" stroke="#b4b2a9" stroke-width=".6"/>
+  <text x="105" y="244" class="t" fill="#d3d1c7">Load spec</text>
+  <text x="105" y="261" class="s" fill="#b4b2a9">URL or JSON</text>
   <path d="M150 248H188" class="flow"/>
 
   <rect x="190" y="218" width="106" height="60" rx="8" fill="#085041" stroke="#5dcaa5" stroke-width=".6"/>
   <text x="243" y="239" class="t" fill="#9fe1cb">Ingest API</text>
-  <text x="243" y="255" class="s" fill="#5dcaa5">validates, then</text>
-  <text x="243" y="268" class="s" fill="#5dcaa5">starts indexing</text>
+  <text x="243" y="255" class="s" fill="#5dcaa5">reads non-empty</text>
+  <text x="243" y="268" class="s" fill="#5dcaa5">JSON input</text>
   <path d="M296 248H320" class="flow"/>
 
   <rect x="322" y="218" width="166" height="60" rx="8" fill="#0c447c" stroke="#85b7eb" stroke-width=".6"/>
@@ -104,9 +104,9 @@
   <path d="M488 248H512" class="flow"/>
 
   <rect x="514" y="218" width="140" height="60" rx="8" fill="#0c447c" stroke="#85b7eb" stroke-width=".6"/>
-  <text x="584" y="239" class="t" fill="#b5d4f4">Embedder</text>
-  <text x="584" y="255" class="s" fill="#85b7eb">all-mpnet-base-v2</text>
-  <text x="584" y="268" class="s" fill="#85b7eb">runs locally</text>
+  <text x="584" y="239" class="t" fill="#b5d4f4">Index builder</text>
+  <text x="584" y="255" class="s" fill="#85b7eb">mpnet → vectors</text>
+  <text x="584" y="268" class="s" fill="#85b7eb">text → BM25 index</text>
   <path d="M654 248H680" class="data"/>
 
   <path d="M682 218V276A68 8 0 0 0 818 276V218Z" fill="#72243e" stroke="#ed93b1" stroke-width=".7"/>
@@ -117,8 +117,8 @@
 
   <line x1="190" y1="296" x2="824" y2="296" stroke="#eaeae8" stroke-width=".5" opacity=".2"/>
 
-  <!-- ===== Query: agent loop ===== -->
-  <text x="190" y="316" class="band">query · agent loop with one bounded retry</text>
+  <!-- ===== Query: LangGraph StateGraph ===== -->
+  <text x="190" y="316" class="band">query · LangGraph StateGraph · one bounded retry</text>
 
   <!-- Browser: ask -->
   <rect x="24" y="329" width="126" height="60" rx="8" fill="#444441" stroke="#b4b2a9" stroke-width=".6"/>
@@ -135,25 +135,27 @@
   <text x="490" y="380" class="c" fill="#5dcaa5">evidence limits, starts a Langfuse trace</text>
   <path d="M490 390V416" class="flow"/>
 
-  <!-- Query agent -->
+  <!-- LangGraph planning nodes -->
   <rect x="330" y="418" width="320" height="82" rx="8" fill="#3c3489" stroke="#afa9ec" stroke-width=".6"/>
   <rect x="338" y="426" width="30" height="16" rx="8" fill="#0a0a0f" stroke="#cecbf6" stroke-width=".8"/>
   <text x="353" y="438" class="bd" fill="#cecbf6">1–3</text>
-  <text x="490" y="441" class="t" fill="#cecbf6">Query agent</text>
-  <text x="490" y="459" class="c" fill="#afa9ec">Resolves references from the last 3 turns</text>
-  <text x="490" y="474" class="c" fill="#afa9ec">Routes "All specs" to ≤3 collections</text>
-  <text x="490" y="489" class="c" fill="#afa9ec">Plans ≤3 ordered operations</text>
+  <text x="490" y="441" class="t" fill="#cecbf6">LangGraph · planning nodes</text>
+  <text x="490" y="459" class="c" fill="#afa9ec">Contextualizes from the last 3 turns</text>
+  <text x="490" y="474" class="c" fill="#afa9ec">Selects ≤3 collections for "All specs"</text>
+  <text x="490" y="489" class="c" fill="#afa9ec">Decomposes into ≤3 ordered operations</text>
   <path d="M490 500V526" class="flow"/>
 
   <!-- Planning calls use the selected external LLM -->
   <path d="M650 438H764C764 430 776 430 776 438H784C784 430 796 430 796 438H806C806 430 818 430 818 438H870" class="flow"/>
-  <rect x="654" y="397" width="108" height="34" rx="5" class="label-bg"/>
-  <text x="708" y="411" class="s" fill="#d3d1c7">question + history +</text>
-  <text x="708" y="425" class="s" fill="#d3d1c7">available spec names</text>
+  <rect x="652" y="383" width="114" height="48" rx="5" class="label-bg"/>
+  <text x="709" y="397" class="s" fill="#d3d1c7">question, history,</text>
+  <text x="709" y="411" class="s" fill="#d3d1c7">available spec names</text>
+  <text x="709" y="425" class="s" fill="#d3d1c7">(as needed per call)</text>
   <path d="M870 480H818C818 488 806 488 806 480H796C796 488 784 488 784 480H776C776 488 764 488 764 480H652" class="async"/>
-  <rect x="654" y="487" width="108" height="34" rx="5" class="label-bg"/>
-  <text x="708" y="501" class="s" fill="#b9b7ae">standalone question</text>
-  <text x="708" y="515" class="s" fill="#b9b7ae">+ ordered step plan</text>
+  <rect x="652" y="493" width="114" height="48" rx="5" class="label-bg"/>
+  <text x="709" y="507" class="s" fill="#b9b7ae">resolved question,</text>
+  <text x="709" y="521" class="s" fill="#b9b7ae">selected specs,</text>
+  <text x="709" y="535" class="s" fill="#b9b7ae">ordered steps</text>
 
   <rect x="872" y="408" width="142" height="100" rx="8" fill="#633806" stroke="#ef9f27" stroke-width=".6"/>
   <text x="943" y="432" class="t" fill="#fac775">LLM provider</text>
@@ -161,12 +163,12 @@
   <text x="943" y="477" class="s" fill="#ef9f27">Groq · Gemini · HF</text>
   <text x="943" y="493" class="s" fill="#ef9f27">same UI selection</text>
 
-  <!-- Embedding retriever (fan-out) -->
+  <!-- Hybrid retrieval for each planned operation -->
   <rect x="330" y="528" width="320" height="150" rx="8" fill="#0a2f57" stroke="#85b7eb" stroke-width=".6"/>
   <rect x="338" y="536" width="20" height="16" rx="8" fill="#0a0a0f" stroke="#b5d4f4" stroke-width=".8"/>
   <text x="348" y="548" class="bd" fill="#b5d4f4">4</text>
-  <text x="490" y="550" class="t" fill="#b5d4f4">Embedding retriever</text>
-  <text x="490" y="566" class="s" fill="#85b7eb">one lane per planned operation (≤3)</text>
+  <text x="490" y="550" class="t" fill="#b5d4f4">Hybrid retriever</text>
+  <text x="490" y="566" class="s" fill="#85b7eb">retrieves for each planned operation (≤3)</text>
   <rect x="344" y="576" width="292" height="28" rx="6" fill="#0c447c" stroke="#85b7eb" stroke-width=".6"/>
   <text x="356" y="594" class="strip">op 1 · dense + BM25 → RRF</text>
   <rect x="344" y="610" width="292" height="28" rx="6" fill="#0c447c" fill-opacity=".55" stroke="#85b7eb" stroke-width=".6" stroke-dasharray="3 3"/>
@@ -210,18 +212,19 @@
   <text x="943" y="878" class="s" fill="#ef9f27">HF Llama 3.1</text>
   <path d="M650 832H806C806 824 818 824 818 832H870" class="flow"/>
   <text x="731" y="826" class="lab">prompt + evidence</text>
-  <path d="M870 850H818C818 858 806 858 806 850H652" class="flow"/>
+  <path d="M870 850H818C818 858 806 858 806 850H652" class="async"/>
   <text x="731" y="844" class="lab">answer</text>
 
   <!-- Confidence gate -->
   <rect x="330" y="906" width="320" height="72" rx="8" fill="#711b13" stroke="#f0997b" stroke-width=".6"/>
   <rect x="338" y="914" width="20" height="16" rx="8" fill="#0a0a0f" stroke="#f5c4b3" stroke-width=".8"/>
   <text x="348" y="926" class="bd" fill="#f5c4b3">5</text>
-  <text x="490" y="929" class="t" fill="#f5c4b3">Confidence gate</text>
-  <text x="490" y="947" class="c" fill="#f0997b">HHEM per step (70%) + cosine (30%),</text>
-  <text x="490" y="962" class="c" fill="#f0997b">JSON field check blended in, score 0–100</text>
+  <text x="490" y="929" class="t" fill="#f5c4b3">Confidence node</text>
+  <text x="490" y="944" class="s" fill="#f0997b">Per step: judge 70% + cosine 30%</text>
+  <text x="490" y="957" class="s" fill="#f0997b">Judge = HHEM 70% + JSON field check 30%</text>
+  <text x="490" y="970" class="s" fill="#f0997b">Missing steps score zero · conditional retry</text>
   <path d="M490 978V1002" class="flow"/>
-  <text x="502" y="995" class="labl" fill="#5dcaa5">pass, or best of two attempts</text>
+  <text x="502" y="995" class="labl" fill="#5dcaa5">pass or retry finished → keep best answer</text>
 
   <!-- Retry loop -->
   <path d="M330 942 H228 V841 H330" class="retry"/>
@@ -231,8 +234,9 @@
   <rect x="200" y="604" width="20" height="16" rx="8" fill="#0a0a0f" stroke="#f0997b" stroke-width=".8"/>
   <text x="210" y="616" class="bd" fill="#f0997b">6</text>
   <text transform="translate(202 772) rotate(-90)" class="lab" fill="#f0997b">score below threshold · one retry max</text>
-  <text x="226" y="816" class="labl" fill="#f0997b">multiple-operations:</text>
-  <text x="226" y="829" class="labl" fill="#f0997b">same embeddings</text>
+  <text x="238" y="797" class="labl" fill="#f0997b">workflow retry:</text>
+  <text x="238" y="811" class="labl" fill="#f0997b">regenerate with</text>
+  <text x="238" y="825" class="labl" fill="#f0997b">same evidence</text>
   <text x="218" y="570" class="labl" fill="#f0997b">single-operation:</text>
   <text x="218" y="583" class="labl" fill="#f0997b">rewrite + retrieve</text>
 
@@ -263,8 +267,8 @@
   <path d="M650 942H870" class="railend"/>
   <rect x="872" y="910" width="142" height="64" rx="8" fill="#173404" stroke="#97c459" stroke-width=".6"/>
   <text x="943" y="932" class="t" fill="#c0dd97">Langfuse</text>
-  <text x="943" y="949" class="s" fill="#97c459">prompts, tokens,</text>
-  <text x="943" y="962" class="s" fill="#97c459">latency, scores</text>
+  <text x="943" y="949" class="s" fill="#97c459">prompts, answers,</text>
+  <text x="943" y="962" class="s" fill="#97c459">tokens, latency, scores</text>
 
   <!-- ===== Legend ===== -->
   <rect x="24" y="1098" width="10" height="10" rx="2" fill="#b4b2a9"/><text x="40" y="1107" class="lg">interface</text>
