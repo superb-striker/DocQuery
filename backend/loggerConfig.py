@@ -1,4 +1,5 @@
 import logging
+
 from colorama import Fore, Style, init
 
 # Initialize colorama : Automatically resets color after each print/log - without this, colors would “bleed” into future text.

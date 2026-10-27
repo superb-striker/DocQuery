@@ -7,3 +7,5 @@ chromaDB/
 backend/chromaDB/
 backend/bm25_indexes/
 *.log
+evals/reports/
+evals/.hf-cache/

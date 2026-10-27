@@ -1,11 +1,13 @@
-import httpx, json, re
-from typing import Dict
+import json
+import re
+
+import httpx
 from loggerConfig import get_logger
 
 logger = get_logger("ingest")
 
 # fetching specifications
-def fetch_specification(url: str) -> Dict:
+def fetch_specification(url: str) -> dict:
     try:
         logger.info(f"Fetching specification from {url}")
         response = httpx.get(url, timeout=10.0)
